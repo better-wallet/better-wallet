@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: better-wallet-postgres
+    environment:
+      POSTGRES_USER: bwuser
+      POSTGRES_PASSWORD: bwpass
+      POSTGRES_DB: better_wallet
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bwuser -d better_wallet"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  better-wallet:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: better-wallet-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_DSN: postgres://bwuser:bwpass@postgres:5432/better_wallet?sslmode=disable
+      AUTH_KIND: oidc
+      AUTH_ISSUER: ${AUTH_ISSUER}
+      AUTH_AUDIENCE: ${AUTH_AUDIENCE}
+      AUTH_JWKS_URI: ${AUTH_JWKS_URI}
+      EXECUTION_BACKEND: kms
+      KMS_KEY_ID: ${KMS_KEY_ID}
+      RPC_ENDPOINT: ${RPC_ENDPOINT}
+      PORT: 8080
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

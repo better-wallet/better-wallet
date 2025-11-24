@@ -1,0 +1,314 @@
+# Better Wallet
+
+**Better Wallet** is an open-source, self-hosted, modular key management and wallet infrastructure for blockchain applications. Built with Go, it provides enterprise-grade security with a focus on simplicity and ease of deployment.
+
+## 🎯 Key Features
+
+- **Self-Hosted First**: Complete control over your infrastructure and data
+- **Authentication Agnostic**: Integrates with any OIDC/JWT provider (Auth0, Better Auth, custom IdP, etc.)
+- **Dual Key Management**: KMS/Vault (default) or TEE (Trusted Execution Environment) for enhanced security
+- **Policy Engine**: Flexible, rule-based access control with default-deny semantics
+- **EVM Support**: Built-in Ethereum and EVM-compatible chain support
+- **Open Source**: MIT licensed, fully auditable code
+
+## 🏗️ Architecture
+
+Better Wallet follows a clean, layered monolithic architecture:
+
+```
+┌─────────────────────────────────────┐
+│      REST API (Interface Layer)     │
+│   Authentication & Validation        │
+└──────────────┬──────────────────────┘
+               │
+┌──────────────▼──────────────────────┐
+│     Application Layer                │
+│  Wallet Operations, Session Mgmt     │
+└──────┬───────────────────┬──────────┘
+       │                   │
+┌──────▼────────┐   ┌──────▼──────────┐
+│ Policy Engine │   │ Key Exec Layer  │
+│ Rule Eval     │   │ KMS/TEE         │
+└───────────────┘   └─────────────────┘
+       │                   │
+┌──────▼───────────────────▼──────────┐
+│     Persistence (PostgreSQL)         │
+└──────────────────────────────────────┘
+```
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+- Go 1.21+
+- PostgreSQL 15+
+- An OIDC/JWT authentication provider
+
+### Installation
+
+1. **Clone the repository**
+```bash
+git clone https://github.com/better-wallet/better-wallet.git
+cd better-wallet
+```
+
+2. **Set up the database**
+```bash
+# Create a PostgreSQL database
+createdb better_wallet
+
+# Run migrations
+psql -d better_wallet -f migrations/0001_initial_schema.up.sql
+```
+
+3. **Configure environment variables**
+```bash
+cp .env.example .env
+# Edit .env with your configuration
+```
+
+Example `.env`:
+```env
+# Database
+POSTGRES_DSN=postgres://user:pass@localhost:5432/better_wallet?sslmode=disable
+
+# Authentication (use your OIDC provider)
+AUTH_KIND=oidc
+AUTH_ISSUER=https://your-auth-provider.com
+AUTH_AUDIENCE=your-app-id
+AUTH_JWKS_URI=https://your-auth-provider.com/.well-known/jwks.json
+
+# Key Execution Backend
+EXECUTION_BACKEND=kms
+KMS_KEY_ID=your-master-key-id
+
+# EVM Configuration
+RPC_ENDPOINT=https://eth-mainnet.g.alchemy.com/v2/YOUR_API_KEY
+
+# Server
+PORT=8080
+```
+
+4. **Build and run**
+```bash
+# Install dependencies
+go mod download
+
+# Build
+go build -o bin/better-wallet ./cmd/server
+
+# Run
+./bin/better-wallet
+```
+
+The server will start on `http://localhost:8080`.
+
+## 📖 API Documentation
+
+### Authentication
+
+All API endpoints (except `/health`) require a Bearer token:
+
+```
+Authorization: Bearer <your-jwt-token>
+```
+
+### Endpoints
+
+#### Health Check
+```
+GET /health
+```
+
+#### Create Wallet
+```
+POST /v1/wallets
+Content-Type: application/json
+
+{
+  "chain_type": "ethereum",
+  "exec_backend": "kms"
+}
+
+Response:
+{
+  "id": "uuid",
+  "address": "0x...",
+  "chain_type": "ethereum",
+  "created_at": "2025-01-01T00:00:00Z"
+}
+```
+
+#### List Wallets
+```
+GET /v1/wallets
+
+Response:
+[
+  {
+    "id": "uuid",
+    "address": "0x...",
+    "chain_type": "ethereum",
+    "created_at": "2025-01-01T00:00:00Z"
+  }
+]
+```
+
+#### Sign Transaction
+```
+POST /v1/wallets/{wallet_id}/sign
+Content-Type: application/json
+
+{
+  "to": "0x...",
+  "value": "1000000000000000000",
+  "chain_id": 1,
+  "nonce": 0,
+  "gas_limit": 21000,
+  "gas_fee_cap": "30000000000",
+  "gas_tip_cap": "2000000000",
+  "data": "0x"
+}
+
+Response:
+{
+  "tx_hash": "0x...",
+  "signed_tx": "0x..."
+}
+```
+
+## 🔐 Security Model
+
+### Key Management
+
+Better Wallet uses a **2-of-2 key splitting** approach:
+
+- **Auth Share**: Encrypted and stored in PostgreSQL
+- **Exec Share**: Managed by the execution backend (KMS/TEE)
+
+Keys are only reconstructed in memory during signing operations and immediately cleared afterward.
+
+### Policy Engine
+
+The policy engine enforces access control with:
+
+- **Default Deny**: All actions are denied unless explicitly allowed
+- **Rule-based Evaluation**: Policies define rules with conditions
+- **Audit Trail**: All policy decisions are logged
+
+Example policy structure:
+```json
+{
+  "rules": [
+    {
+      "action": "sign_transaction",
+      "conditions": [
+        {
+          "type": "max_value",
+          "value": "1000000000000000000"
+        },
+        {
+          "type": "address_whitelist",
+          "addresses": ["0x..."]
+        }
+      ]
+    }
+  ]
+}
+```
+
+## 🛠️ Development
+
+### Project Structure
+
+```
+better-wallet/
+├── cmd/
+│   └── server/          # Main application entry point
+├── internal/
+│   ├── api/             # HTTP handlers and server
+│   ├── app/             # Application/business logic layer
+│   ├── config/          # Configuration management
+│   ├── crypto/          # Cryptographic utilities
+│   ├── keyexec/         # Key execution backends (KMS/TEE)
+│   ├── middleware/      # HTTP middleware (auth, logging)
+│   ├── policy/          # Policy engine
+│   └── storage/         # Database repositories
+├── pkg/
+│   ├── errors/          # Error definitions
+│   └── types/           # Shared type definitions
+├── migrations/          # SQL migration files
+└── docs/                # Documentation
+```
+
+### Running Tests
+
+```bash
+go test ./...
+```
+
+### Database Migrations
+
+To roll back the database schema:
+```bash
+psql -d better_wallet -f migrations/0001_initial_schema.down.sql
+```
+
+## 🗺️ Roadmap
+
+### ✅ Phase 1 - MVP (Current)
+- Go monolith + PostgreSQL
+- KMS/Vault execution backend
+- EVM support
+- REST API
+- Policy engine with rule-based access control
+- OIDC/JWT authentication
+- Complete audit logging
+
+### 🚧 Phase 2 - Enhanced Security
+- TEE backend (production-ready)
+- On-Device mode
+- Enhanced policies (ABI parsing, EIP-712 support)
+- Advanced recovery options
+- Performance optimizations and horizontal scaling
+
+### 📋 Phase 3 - Multi-Chain & Scale
+- Multi-chain support (Solana, Bitcoin, Cosmos)
+- Optional caching layer for high throughput
+- Advanced observability (OTLP, metrics, tracing)
+- Session signer management UI
+
+### 🎯 Phase 4 - Enterprise & Ecosystem
+- Account Abstraction / Paymaster integration
+- Developer SDKs (JavaScript, Python, Rust)
+- Admin UI and dashboard
+- Compliance modules (SOC 2, ISO 27001)
+- Optional managed SaaS offering
+
+## 📝 License
+
+Better Wallet is licensed under the [MIT License](LICENSE).
+
+## 🤝 Contributing
+
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## 🔗 Links
+
+- **Documentation**: [docs/](./docs)
+- **Issue Tracker**: [GitHub Issues](https://github.com/better-wallet/better-wallet/issues)
+- **Discord**: https://discord.gg/better-wallet
+
+## ⚠️ Security
+
+For security issues, please email security@better-wallet.com instead of using the issue tracker.
+
+## 📞 Support
+
+- **GitHub Discussions**: Ask questions and share ideas
+- **Discord**: Join our community for real-time help
+- **Email**: contact@better-wallet.com
+
+---
+
+Built with ❤️ by the Better Wallet Team
