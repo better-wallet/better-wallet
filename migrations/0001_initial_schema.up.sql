@@ -103,20 +103,6 @@ CREATE INDEX idx_session_signers_wallet_id ON session_signers(wallet_id);
 CREATE INDEX idx_session_signers_signer_id ON session_signers(signer_id);
 CREATE INDEX idx_session_signers_ttl_expires_at ON session_signers(ttl_expires_at);
 
--- Idempotency keys table for replay protection on write operations
-CREATE TABLE idempotency_keys (
-    id bigserial PRIMARY KEY,
-    app_id text NOT NULL,
-    idempotency_key text NOT NULL,
-    method text NOT NULL,
-    url text NOT NULL,
-    request_digest text NOT NULL,
-    created_at timestamptz NOT NULL DEFAULT now(),
-    UNIQUE(app_id, idempotency_key)
-);
-
-CREATE INDEX idx_idempotency_keys_created_at ON idempotency_keys(created_at DESC);
-
 -- Audit logs table
 -- request_nonce is deprecated (v0.7.0+) but kept for historical audit data
 CREATE TABLE audit_logs (
@@ -148,23 +134,6 @@ CREATE TABLE recovery_info (
     updated_at timestamptz NOT NULL DEFAULT now()
 );
 
--- Idempotency keys table
--- Used for preventing duplicate write operations without server-side nonce tracking
-CREATE TABLE idempotency_keys (
-    key             text        PRIMARY KEY,
-    resource_type   text        NOT NULL,
-    resource_id     uuid        NULL,         -- NULL until operation completes
-    status          text        NOT NULL CHECK (status IN ('pending', 'completed', 'failed')),
-    response_code   int         NULL,
-    response_body   jsonb       NULL,
-    created_at      timestamptz NOT NULL DEFAULT now(),
-    completed_at    timestamptz NULL,
-    expires_at      timestamptz NOT NULL      -- TTL for cleanup (typically 24 hours)
-);
-
-CREATE INDEX idx_idempotency_keys_expires ON idempotency_keys(expires_at);
-CREATE INDEX idx_idempotency_keys_status ON idempotency_keys(status);
-
 -- Idempotency records table for response caching
 -- Store first response for 24 hours to prevent duplicate operations
 -- Scoped by app_id, key, method, and URL to allow same key for different endpoints
@@ -188,8 +157,7 @@ CREATE INDEX idx_idempotency_records_app_key_method_url ON idempotency_records(a
 
 -- Comments
 COMMENT ON TABLE authorization_keys IS 'Public keys for owner signature verification. Only P-256 is supported';
-COMMENT ON TABLE idempotency_keys IS 'Idempotency keys for write operations to prevent duplicate requests (v0.7.0+)';
-COMMENT ON TABLE idempotency_records IS 'Stores idempotency records with cached responses. Records expire after 24 hours.';
+COMMENT ON TABLE idempotency_records IS 'Stores idempotency records with cached responses. Records expire after 24 hours. Scoped by (app_id, key, method, url)';
 COMMENT ON COLUMN idempotency_records.key IS 'The idempotency key from x-idempotency-key header (max 256 chars, recommended UUIDv4)';
 COMMENT ON COLUMN idempotency_records.body_hash IS 'SHA-256 hash of the request body to detect reused keys with different bodies';
-COMMENT ON COLUMN audit_logs.request_nonce IS 'Deprecated in v0.7.0 - replaced with idempotency keys';
+COMMENT ON COLUMN audit_logs.request_nonce IS 'Deprecated in v0.7.0 - replaced with idempotency records';

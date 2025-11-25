@@ -2,12 +2,12 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // IdempotencyRepo handles idempotency key storage with response caching
@@ -68,9 +68,12 @@ func (r *IdempotencyRepo) Get(ctx context.Context, appID, key, method, url strin
 	record.Key = key
 
 	// Parse headers from JSON
-	// For simplicity, storing as JSONB in database
-	// In production, you might want a more sophisticated approach
-	record.Headers = make(http.Header)
+	if err := json.Unmarshal(headersJSON, &record.Headers); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal headers: %w", err)
+	}
+	if record.Headers == nil {
+		record.Headers = make(http.Header)
+	}
 
 	return &record, nil
 }
@@ -84,10 +87,13 @@ func (r *IdempotencyRepo) Store(ctx context.Context, record *IdempotencyRecord) 
 		ON CONFLICT (app_id, key, method, url) DO NOTHING
 	`
 
-	// Simple header storage (in production, use proper JSONB encoding)
-	var headersJSON []byte = []byte("{}")
+	// Encode headers to JSON
+	headersJSON, err := json.Marshal(record.Headers)
+	if err != nil {
+		return fmt.Errorf("failed to marshal headers: %w", err)
+	}
 
-	_, err := r.store.pool.Exec(ctx, query,
+	_, err = r.store.pool.Exec(ctx, query,
 		record.AppID,
 		record.Key,
 		record.Method,
@@ -139,76 +145,4 @@ func (r *IdempotencyRepo) Cleanup(ctx context.Context) (int64, error) {
 	}
 
 	return result.RowsAffected(), nil
-}
-
-// Legacy methods for backward compatibility
-
-// IdempotencyRepository handles idempotency key storage (legacy)
-type IdempotencyRepository struct {
-	store *Store
-}
-
-// NewIdempotencyRepository creates a new repository (legacy)
-func NewIdempotencyRepository(store *Store) *IdempotencyRepository {
-	return &IdempotencyRepository{store: store}
-}
-
-// CheckAndRecord inserts the idempotency key if not present (legacy)
-// Deprecated: Use IdempotencyRepo.Store instead
-func (r *IdempotencyRepository) CheckAndRecord(ctx context.Context, appID, key, method, url, requestDigest string) error {
-	// Check if the new table exists first
-	query := `
-		SELECT EXISTS (
-			SELECT FROM information_schema.tables
-			WHERE table_name = 'idempotency_records'
-		)
-	`
-
-	var newTableExists bool
-	err := r.store.pool.QueryRow(ctx, query).Scan(&newTableExists)
-	if err != nil {
-		return fmt.Errorf("failed to check table existence: %w", err)
-	}
-
-	if newTableExists {
-		// Use new implementation
-		repo := &IdempotencyRepo{store: r.store}
-		exists, err := repo.Exists(ctx, appID, key)
-		if err != nil {
-			return err
-		}
-		if exists {
-			return fmt.Errorf("idempotency key already used")
-		}
-
-		// Store a minimal record
-		return repo.Store(ctx, &IdempotencyRecord{
-			AppID:      appID,
-			Key:        key,
-			BodyHash:   requestDigest,
-			StatusCode: 200,
-			Headers:    make(http.Header),
-			Body:       []byte("{}"),
-			ExpiresAt:  time.Now().Add(24 * time.Hour),
-		})
-	}
-
-	// Fallback to legacy implementation
-	legacyQuery := `
-        INSERT INTO idempotency_keys (app_id, idempotency_key, method, url, request_digest)
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (app_id, idempotency_key) DO NOTHING
-        RETURNING id
-    `
-
-	var id pgtype.Int8
-	err = r.store.pool.QueryRow(ctx, legacyQuery, appID, key, method, url, requestDigest).Scan(&id)
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			return fmt.Errorf("idempotency key already used")
-		}
-		return fmt.Errorf("failed to record idempotency key: %w", err)
-	}
-
-	return nil
 }

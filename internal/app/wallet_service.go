@@ -32,7 +32,6 @@ type WalletService struct {
 	policyRepo  *storage.PolicyRepository
 	auditRepo   *storage.AuditRepository
 	sessionRepo *storage.SessionSignerRepository
-	idemRepo    *storage.IdempotencyRepository
 	authKeyRepo *storage.AuthorizationKeyRepository
 	keyExec     keyexec.KeyExecutor
 	policyEng   *policy.Engine
@@ -51,7 +50,6 @@ func NewWalletService(
 		policyRepo:  storage.NewPolicyRepository(store),
 		auditRepo:   storage.NewAuditRepository(store),
 		sessionRepo: storage.NewSessionSignerRepository(store),
-		idemRepo:    storage.NewIdempotencyRepository(store),
 		authKeyRepo: storage.NewAuthorizationKeyRepository(store),
 		keyExec:     keyExec,
 		policyEng:   policyEng,
