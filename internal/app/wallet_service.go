@@ -128,6 +128,26 @@ func (s *WalletService) CreateWallet(ctx context.Context, req *CreateWalletReque
 			if err != nil || quorum == nil {
 				return nil, fmt.Errorf("owner_id does not reference a valid authorization key or key quorum")
 			}
+
+			// Validate quorum membership and threshold
+			if quorum.Status != types.StatusActive {
+				return nil, fmt.Errorf("key quorum is not active")
+			}
+			if quorum.Threshold <= 0 || quorum.Threshold > len(quorum.KeyIDs) {
+				return nil, fmt.Errorf("key quorum has invalid threshold")
+			}
+
+			// Verify all member keys exist and are active
+			for _, keyID := range quorum.KeyIDs {
+				memberKey, err := s.authKeyRepo.GetByID(ctx, keyID)
+				if err != nil || memberKey == nil {
+					return nil, fmt.Errorf("key quorum member %s not found", keyID)
+				}
+				if memberKey.Status != types.StatusActive {
+					return nil, fmt.Errorf("key quorum member %s is not active", keyID)
+				}
+			}
+
 			ownerID = quorum.ID
 		}
 	} else if req.OwnerPublicKey != "" {

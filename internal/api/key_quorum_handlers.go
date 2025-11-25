@@ -230,6 +230,17 @@ func (s *Server) handleCreateKeyQuorum(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Verify authorization signature from at least one of the member keys
+	if err := s.verifySignatureFromAnyKey(r, req.KeyIDs); err != nil {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeForbidden,
+			"Invalid authorization signature",
+			err.Error(),
+			http.StatusForbidden,
+		))
+		return
+	}
+
 	// Create key quorum
 	kq := &types.KeyQuorum{
 		ID:        uuid.New(),
@@ -507,4 +518,51 @@ func (s *Server) verifyKeyQuorumAuthorizationSignature(r *http.Request, keyQuoru
 	}
 
 	return nil
+}
+
+// verifySignatureFromAnyKey verifies that the request is signed by at least one of the given keys
+func (s *Server) verifySignatureFromAnyKey(r *http.Request, keyIDs []uuid.UUID) error {
+	// Build canonical payload
+	_, canonicalBytes, err := auth.BuildCanonicalPayload(r)
+	if err != nil {
+		return err
+	}
+
+	// Extract signatures
+	signatures := auth.ExtractSignatures(r)
+	if len(signatures) == 0 {
+		return apperrors.New(
+			apperrors.ErrCodeUnauthorized,
+			"No authorization signatures provided",
+			401,
+		)
+	}
+
+	// Try to verify against any of the provided keys
+	authKeyRepo := storage.NewAuthorizationKeyRepository(s.store)
+	verifier := auth.NewSignatureVerifier()
+
+	for _, sig := range signatures {
+		for _, keyID := range keyIDs {
+			key, err := authKeyRepo.GetByID(r.Context(), keyID)
+			if err != nil || key == nil || key.Status != types.StatusActive {
+				continue
+			}
+
+			publicKeyPEM, err := auth.PublicKeyToPEM(key.PublicKey)
+			if err != nil {
+				continue
+			}
+
+			if verified, err := verifier.VerifySignature(sig, canonicalBytes, publicKeyPEM); err == nil && verified {
+				return nil
+			}
+		}
+	}
+
+	return apperrors.New(
+		apperrors.ErrCodeForbidden,
+		"No valid signature from any of the specified keys",
+		403,
+	)
 }

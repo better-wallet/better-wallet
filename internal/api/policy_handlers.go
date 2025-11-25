@@ -308,6 +308,17 @@ func (s *Server) handleCreatePolicy(w http.ResponseWriter, r *http.Request) {
 		ownerID = keys[0].ID
 	}
 
+	// Verify authorization signature against the owner key
+	if err := s.verifySignatureAgainstAuthKey(r, ownerID); err != nil {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeForbidden,
+			"Invalid authorization signature",
+			err.Error(),
+			http.StatusForbidden,
+		))
+		return
+	}
+
 	// Create policy
 	policy := &types.Policy{
 		ID:        uuid.New(),
@@ -561,6 +572,59 @@ func (s *Server) verifyPolicyAuthorizationSignature(r *http.Request, policyID uu
 		return apperrors.New(
 			apperrors.ErrCodeInternalError,
 			"Failed to parse owner public key",
+			500,
+		)
+	}
+
+	verifier := auth.NewSignatureVerifier()
+	for _, sig := range signatures {
+		if verified, err := verifier.VerifySignature(sig, canonicalBytes, publicKeyPEM); err == nil && verified {
+			return nil
+		}
+	}
+
+	return apperrors.New(
+		apperrors.ErrCodeForbidden,
+		"Authorization signature verification failed",
+		403,
+	)
+}
+
+// verifySignatureAgainstAuthKey verifies authorization signature against an auth key
+func (s *Server) verifySignatureAgainstAuthKey(r *http.Request, authKeyID uuid.UUID) error {
+	// Build canonical payload
+	_, canonicalBytes, err := auth.BuildCanonicalPayload(r)
+	if err != nil {
+		return err
+	}
+
+	// Extract signatures
+	signatures := auth.ExtractSignatures(r)
+	if len(signatures) == 0 {
+		return apperrors.New(
+			apperrors.ErrCodeUnauthorized,
+			"No authorization signatures provided",
+			401,
+		)
+	}
+
+	// Get the authorization key
+	authKeyRepo := storage.NewAuthorizationKeyRepository(s.store)
+	authKey, err := authKeyRepo.GetByID(r.Context(), authKeyID)
+	if err != nil || authKey == nil {
+		return apperrors.New(
+			apperrors.ErrCodeNotFound,
+			"Authorization key not found",
+			404,
+		)
+	}
+
+	// Verify signature with the auth key
+	publicKeyPEM, err := auth.PublicKeyToPEM(authKey.PublicKey)
+	if err != nil {
+		return apperrors.New(
+			apperrors.ErrCodeInternalError,
+			"Failed to parse public key",
 			500,
 		)
 	}
