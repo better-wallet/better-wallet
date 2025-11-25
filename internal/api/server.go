@@ -10,6 +10,7 @@ import (
 	"github.com/better-wallet/better-wallet/internal/config"
 	"github.com/better-wallet/better-wallet/internal/middleware"
 	"github.com/better-wallet/better-wallet/internal/storage"
+	"github.com/better-wallet/better-wallet/pkg/crypto"
 )
 
 // Server represents the HTTP server
@@ -146,4 +147,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"ok"}`))
+}
+
+// hpkeEncrypt encrypts data using HPKE with the recipient's public key
+func (s *Server) hpkeEncrypt(recipientPublicKeyB64 string, plaintext []byte) (*crypto.HPKEEncryptedData, error) {
+	return crypto.EncryptWithHPKE(recipientPublicKeyB64, plaintext)
 }

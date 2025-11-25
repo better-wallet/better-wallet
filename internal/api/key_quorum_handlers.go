@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/better-wallet/better-wallet/internal/storage"
+	"github.com/better-wallet/better-wallet/pkg/auth"
 	apperrors "github.com/better-wallet/better-wallet/pkg/errors"
 	"github.com/better-wallet/better-wallet/pkg/types"
 	"github.com/google/uuid"
@@ -261,6 +262,12 @@ func (s *Server) handleUpdateKeyQuorum(w http.ResponseWriter, r *http.Request, k
 		return
 	}
 
+	// Verify authorization signature - key quorums require signature to modify
+	if err := s.verifyKeyQuorumAuthorizationSignature(r, keyQuorumID); err != nil {
+		s.writeError(w, apperrors.InvalidSignature(err.Error()))
+		return
+	}
+
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		s.writeError(w, apperrors.NewWithDetail(
@@ -379,6 +386,12 @@ func (s *Server) handleDeleteKeyQuorum(w http.ResponseWriter, r *http.Request, k
 		return
 	}
 
+	// Verify authorization signature - key quorums require signature to delete
+	if err := s.verifyKeyQuorumAuthorizationSignature(r, keyQuorumID); err != nil {
+		s.writeError(w, apperrors.InvalidSignature(err.Error()))
+		return
+	}
+
 	// Get key quorum to verify it exists
 	repo := storage.NewKeyQuorumRepository(s.store)
 	kq, err := repo.GetByID(r.Context(), keyQuorumID)
@@ -424,4 +437,74 @@ func convertKeyQuorumToResponse(kq *types.KeyQuorum) KeyQuorumResponse {
 		Status:    kq.Status,
 		CreatedAt: kq.CreatedAt.UnixMilli(),
 	}
+}
+
+// verifyKeyQuorumAuthorizationSignature verifies authorization signature for key quorum operations
+// Verifies that the request is signed by M-of-N keys from the quorum itself
+func (s *Server) verifyKeyQuorumAuthorizationSignature(r *http.Request, keyQuorumID uuid.UUID) error {
+	// Build canonical payload
+	_, canonicalBytes, err := auth.BuildCanonicalPayload(r)
+	if err != nil {
+		return err
+	}
+
+	// Extract signatures from x-authorization-signature header
+	signatures := auth.ExtractSignatures(r)
+	if len(signatures) == 0 {
+		return apperrors.New(
+			apperrors.ErrCodeUnauthorized,
+			"No authorization signatures provided",
+			401,
+		)
+	}
+
+	// Get the key quorum
+	repo := storage.NewKeyQuorumRepository(s.store)
+	quorum, err := repo.GetByID(r.Context(), keyQuorumID)
+	if err != nil || quorum == nil {
+		return apperrors.New(
+			apperrors.ErrCodeNotFound,
+			"Key quorum not found",
+			404,
+		)
+	}
+
+	// Verify threshold signatures from quorum members
+	authKeyRepo := storage.NewAuthorizationKeyRepository(s.store)
+	verifier := auth.NewSignatureVerifier()
+	verifiedKeys := make(map[uuid.UUID]bool)
+
+	for _, sig := range signatures {
+		for _, keyID := range quorum.KeyIDs {
+			if verifiedKeys[keyID] {
+				continue // Already verified this key
+			}
+
+			key, err := authKeyRepo.GetByID(r.Context(), keyID)
+			if err != nil || key == nil || key.Status != types.StatusActive {
+				continue
+			}
+
+			publicKeyPEM, err := auth.PublicKeyToPEM(key.PublicKey)
+			if err != nil {
+				continue
+			}
+
+			if verified, err := verifier.VerifySignature(sig, canonicalBytes, publicKeyPEM); err == nil && verified {
+				verifiedKeys[keyID] = true
+				break
+			}
+		}
+	}
+
+	// Check if threshold is met
+	if len(verifiedKeys) < quorum.Threshold {
+		return apperrors.New(
+			apperrors.ErrCodeForbidden,
+			"Insufficient signatures for quorum threshold",
+			403,
+		)
+	}
+
+	return nil
 }

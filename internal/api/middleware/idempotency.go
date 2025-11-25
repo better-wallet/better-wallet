@@ -29,8 +29,8 @@ func NewIdempotencyMiddleware(repo *storage.IdempotencyRepo) *IdempotencyMiddlew
 func (m *IdempotencyMiddleware) Handle(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Only apply to mutation requests (POST, PATCH, DELETE)
+		// Only apply to mutation requests (POST, PATCH, DELETE)
 		if r.Method != http.MethodPost && r.Method != http.MethodPatch && r.Method != http.MethodDelete {
-			next.ServeHTTP(w, r)
 			return
 		}
 
@@ -39,6 +39,29 @@ func (m *IdempotencyMiddleware) Handle(next http.Handler) http.Handler {
 		if idempotencyKey == "" {
 			// No idempotency key - proceed normally
 			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Validate key length (max 256 characters)
+		if len(idempotencyKey) > 256 {
+			writeError(w, errors.NewWithDetail(
+				errors.ErrCodeBadRequest,
+				"Idempotency key too long",
+				"Maximum length is 256 characters",
+				http.StatusBadRequest,
+			))
+			return
+		}
+
+		// Get app ID from header
+		appID := r.Header.Get("x-app-id")
+		if appID == "" {
+			writeError(w, errors.NewWithDetail(
+				errors.ErrCodeBadRequest,
+				"Missing app ID",
+				"x-app-id header is required",
+				http.StatusBadRequest,
+			))
 			return
 		}
 
@@ -60,8 +83,8 @@ func (m *IdempotencyMiddleware) Handle(next http.Handler) http.Handler {
 		// Compute body hash
 		bodyHash := computeBodyHash(bodyBytes)
 
-		// Check if this key was used before
-		record, err := m.repo.Get(r.Context(), idempotencyKey)
+		// Check if this key was used before (scoped to app+key+method+url)
+		record, err := m.repo.Get(r.Context(), appID, idempotencyKey, r.Method, r.URL.Path)
 		if err == nil {
 			// Key exists - check if body matches
 			if record.BodyHash == bodyHash {
@@ -94,6 +117,9 @@ func (m *IdempotencyMiddleware) Handle(next http.Handler) http.Handler {
 		// Store the response for future requests
 		expiresAt := time.Now().Add(24 * time.Hour)
 		err = m.repo.Store(r.Context(), &storage.IdempotencyRecord{
+			AppID:      appID,
+			Method:     r.Method,
+			URL:        r.URL.Path,
 			Key:        idempotencyKey,
 			BodyHash:   bodyHash,
 			StatusCode: recorder.statusCode,

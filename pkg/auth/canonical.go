@@ -33,12 +33,10 @@ func BuildCanonicalPayload(r *http.Request) (*CanonicalPayload, []byte, error) {
 	// Restore the body for subsequent handlers
 	r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 
-	// Build the full URL (scheme + host + path + query)
-	scheme := "https"
-	if r.TLS == nil {
-		scheme = "http"
-	}
-	fullURL := fmt.Sprintf("%s://%s%s", scheme, r.Host, r.URL.RequestURI())
+	// Build the full URL
+	// Use the path and query string only, without host
+	// This allows signatures to be portable across different deployment environments
+	fullURL := r.URL.RequestURI()
 
 	// Extract relevant headers (only those that should be signed)
 	headers := make(map[string]string)

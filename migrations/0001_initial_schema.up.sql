@@ -167,19 +167,24 @@ CREATE INDEX idx_idempotency_keys_status ON idempotency_keys(status);
 
 -- Idempotency records table for response caching
 -- Store first response for 24 hours to prevent duplicate operations
+-- Scoped by app_id, key, method, and URL to allow same key for different endpoints
 CREATE TABLE idempotency_records (
     id BIGSERIAL PRIMARY KEY,
-    key VARCHAR(256) UNIQUE NOT NULL,
+    app_id VARCHAR(256) NOT NULL,
+    key VARCHAR(256) NOT NULL,
+    method VARCHAR(10) NOT NULL,
+    url VARCHAR(2048) NOT NULL,
     body_hash VARCHAR(64) NOT NULL,
     status_code INTEGER NOT NULL,
     headers JSONB NOT NULL DEFAULT '{}',
     body BYTEA NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    expires_at TIMESTAMP NOT NULL
+    expires_at TIMESTAMP NOT NULL,
+    UNIQUE(app_id, key, method, url)
 );
 
 CREATE INDEX idx_idempotency_records_expires_at ON idempotency_records(expires_at);
-CREATE INDEX idx_idempotency_records_key ON idempotency_records(key) WHERE expires_at > NOW();
+CREATE INDEX idx_idempotency_records_app_key_method_url ON idempotency_records(app_id, key, method, url) WHERE expires_at > NOW();
 
 -- Comments
 COMMENT ON TABLE authorization_keys IS 'Public keys for owner signature verification. Only P-256 is supported';

@@ -297,17 +297,6 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 
 - **Documentation**: [docs/](./docs)
 - **Issue Tracker**: [GitHub Issues](https://github.com/better-wallet/better-wallet/issues)
-- **Discord**: https://discord.gg/better-wallet
-
-## ⚠️ Security
-
-For security issues, please email security@better-wallet.com instead of using the issue tracker.
-
-## 📞 Support
-
-- **GitHub Discussions**: Ask questions and share ideas
-- **Discord**: Join our community for real-time help
-- **Email**: contact@better-wallet.com
 
 ---
 

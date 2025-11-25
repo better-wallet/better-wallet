@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/better-wallet/better-wallet/internal/storage"
+	"github.com/better-wallet/better-wallet/pkg/auth"
 	apperrors "github.com/better-wallet/better-wallet/pkg/errors"
 	"github.com/better-wallet/better-wallet/pkg/types"
 	"github.com/google/uuid"
@@ -28,6 +29,7 @@ type CreatePolicyRequest struct {
 	Name      string                 `json:"name"`
 	ChainType string                 `json:"chain_type"`
 	Rules     map[string]interface{} `json:"rules"`
+	OwnerID   *uuid.UUID             `json:"owner_id,omitempty"` // Authorization key ID that will own this policy
 }
 
 // UpdatePolicyRequest represents the request to update a policy
@@ -123,10 +125,10 @@ func (s *Server) handleGetPolicy(w http.ResponseWriter, r *http.Request, policyI
 		return
 	}
 
-	// Verify ownership
-	userRepo := storage.NewUserRepository(s.store)
-	user, err := userRepo.GetByExternalSub(r.Context(), userSub)
-	if err != nil || user == nil || user.ID != policy.OwnerID {
+	// Verify ownership - check if the policy's owner key belongs to the authenticated user
+	authKeyRepo := storage.NewAuthorizationKeyRepository(s.store)
+	ownerKey, err := authKeyRepo.GetByID(r.Context(), policy.OwnerID)
+	if err != nil || ownerKey == nil || ownerKey.OwnerEntity != userSub {
 		s.writeError(w, apperrors.ErrForbidden)
 		return
 	}
@@ -143,27 +145,43 @@ func (s *Server) handleListPolicies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userRepo := storage.NewUserRepository(s.store)
-	user, err := userRepo.GetByExternalSub(r.Context(), userSub)
-	if err != nil || user == nil {
+	// Get user's authorization keys
+	authKeyRepo := storage.NewAuthorizationKeyRepository(s.store)
+	userKeys, err := authKeyRepo.GetActiveByOwnerEntity(r.Context(), userSub)
+	if err != nil {
 		s.writeError(w, apperrors.NewWithDetail(
 			apperrors.ErrCodeInternalError,
-			"Failed to get user",
-			"",
+			"Failed to get authorization keys",
+			err.Error(),
 			http.StatusInternalServerError,
 		))
 		return
 	}
 
-	// Get all policies owned by this user
+	// Build list of key IDs
+	keyIDs := make([]uuid.UUID, len(userKeys))
+	for i, key := range userKeys {
+		keyIDs[i] = key.ID
+	}
+
+	// If user has no keys, return empty list
+	if len(keyIDs) == 0 {
+		response := ListPoliciesResponse{
+			Data: []PolicyResponse{},
+		}
+		s.writeJSON(w, http.StatusOK, response)
+		return
+	}
+
+	// Get all policies owned by user's authorization keys
 	query := `
 		SELECT id, name, chain_type, version, rules, owner_id, created_at
 		FROM policies
-		WHERE owner_id = $1
+		WHERE owner_id = ANY($1)
 		ORDER BY created_at DESC
 	`
 
-	rows, err := s.store.DB().Query(r.Context(), query, user.ID)
+	rows, err := s.store.DB().Query(r.Context(), query, keyIDs)
 	if err != nil {
 		s.writeError(w, apperrors.NewWithDetail(
 			apperrors.ErrCodeInternalError,
@@ -245,17 +263,49 @@ func (s *Server) handleCreatePolicy(w http.ResponseWriter, r *http.Request) {
 		req.Rules = make(map[string]interface{})
 	}
 
-	// Get user
-	userRepo := storage.NewUserRepository(s.store)
-	user, err := userRepo.GetByExternalSub(r.Context(), userSub)
-	if err != nil || user == nil {
-		s.writeError(w, apperrors.NewWithDetail(
-			apperrors.ErrCodeInternalError,
-			"Failed to get user",
-			"",
-			http.StatusInternalServerError,
-		))
-		return
+	// Determine owner ID
+	var ownerID uuid.UUID
+	if req.OwnerID != nil {
+		// Use provided authorization key ID
+		ownerID = *req.OwnerID
+
+		// Verify the auth key exists and is active
+		authKeyRepo := storage.NewAuthorizationKeyRepository(s.store)
+		authKey, err := authKeyRepo.GetByID(r.Context(), ownerID)
+		if err != nil || authKey == nil || authKey.Status != types.StatusActive {
+			s.writeError(w, apperrors.NewWithDetail(
+				apperrors.ErrCodeBadRequest,
+				"Invalid owner_id",
+				"Owner must be an active authorization key",
+				http.StatusBadRequest,
+			))
+			return
+		}
+
+		// Verify the auth key belongs to the authenticated user
+		if authKey.OwnerEntity != userSub {
+			s.writeError(w, apperrors.NewWithDetail(
+				apperrors.ErrCodeForbidden,
+				"Cannot create policy with another user's authorization key",
+				"",
+				http.StatusForbidden,
+			))
+			return
+		}
+	} else {
+		// Use user's default (first active) authorization key
+		authKeyRepo := storage.NewAuthorizationKeyRepository(s.store)
+		keys, err := authKeyRepo.GetActiveByOwnerEntity(r.Context(), userSub)
+		if err != nil || len(keys) == 0 {
+			s.writeError(w, apperrors.NewWithDetail(
+				apperrors.ErrCodeBadRequest,
+				"No active authorization key found",
+				"Create an authorization key first",
+				http.StatusBadRequest,
+			))
+			return
+		}
+		ownerID = keys[0].ID
 	}
 
 	// Create policy
@@ -265,7 +315,7 @@ func (s *Server) handleCreatePolicy(w http.ResponseWriter, r *http.Request) {
 		ChainType: req.ChainType,
 		Version:   "v1",
 		Rules:     req.Rules,
-		OwnerID:   user.ID,
+		OwnerID:   ownerID,
 	}
 
 	policyRepo := storage.NewPolicyRepository(s.store)
@@ -288,6 +338,12 @@ func (s *Server) handleUpdatePolicy(w http.ResponseWriter, r *http.Request, poli
 	userSub, ok := getUserSub(r.Context())
 	if !ok {
 		s.writeError(w, apperrors.ErrUnauthorized)
+		return
+	}
+
+	// Verify authorization signature
+	if err := s.verifyPolicyAuthorizationSignature(r, policyID, userSub); err != nil {
+		s.writeError(w, apperrors.InvalidSignature(err.Error()))
 		return
 	}
 
@@ -332,14 +388,6 @@ func (s *Server) handleUpdatePolicy(w http.ResponseWriter, r *http.Request, poli
 			"",
 			http.StatusNotFound,
 		))
-		return
-	}
-
-	// Verify ownership
-	userRepo := storage.NewUserRepository(s.store)
-	user, err := userRepo.GetByExternalSub(r.Context(), userSub)
-	if err != nil || user == nil || user.ID != policy.OwnerID {
-		s.writeError(w, apperrors.ErrForbidden)
 		return
 	}
 
@@ -391,6 +439,12 @@ func (s *Server) handleDeletePolicy(w http.ResponseWriter, r *http.Request, poli
 		return
 	}
 
+	// Verify authorization signature
+	if err := s.verifyPolicyAuthorizationSignature(r, policyID, userSub); err != nil {
+		s.writeError(w, apperrors.InvalidSignature(err.Error()))
+		return
+	}
+
 	// Get policy
 	policyRepo := storage.NewPolicyRepository(s.store)
 	policy, err := policyRepo.GetByID(r.Context(), policyID)
@@ -410,14 +464,6 @@ func (s *Server) handleDeletePolicy(w http.ResponseWriter, r *http.Request, poli
 			"",
 			http.StatusNotFound,
 		))
-		return
-	}
-
-	// Verify ownership
-	userRepo := storage.NewUserRepository(s.store)
-	user, err := userRepo.GetByExternalSub(r.Context(), userSub)
-	if err != nil || user == nil || user.ID != policy.OwnerID {
-		s.writeError(w, apperrors.ErrForbidden)
 		return
 	}
 
@@ -448,4 +494,87 @@ func convertPolicyToResponse(p *types.Policy) PolicyResponse {
 		OwnerID:   p.OwnerID,
 		CreatedAt: p.CreatedAt.UnixMilli(),
 	}
+}
+
+// verifyPolicyAuthorizationSignature verifies the authorization signature for policy operations
+// Validates signature against the policy's owner authorization key
+func (s *Server) verifyPolicyAuthorizationSignature(r *http.Request, policyID uuid.UUID, userSub string) error {
+	// Build canonical payload
+	_, canonicalBytes, err := auth.BuildCanonicalPayload(r)
+	if err != nil {
+		return err
+	}
+
+	// Extract signatures from x-authorization-signature header
+	signatures := auth.ExtractSignatures(r)
+	if len(signatures) == 0 {
+		return apperrors.New(
+			apperrors.ErrCodeUnauthorized,
+			"No authorization signatures provided",
+			401,
+		)
+	}
+
+	// Get policy
+	policyRepo := storage.NewPolicyRepository(s.store)
+	policy, err := policyRepo.GetByID(r.Context(), policyID)
+	if err != nil || policy == nil {
+		return apperrors.New(
+			apperrors.ErrCodeNotFound,
+			"Policy not found",
+			404,
+		)
+	}
+
+	// Get the owner authorization key
+	authKeyRepo := storage.NewAuthorizationKeyRepository(s.store)
+	ownerKey, err := authKeyRepo.GetByID(r.Context(), policy.OwnerID)
+	if err != nil || ownerKey == nil {
+		return apperrors.New(
+			apperrors.ErrCodeInternalError,
+			"Policy owner key not found",
+			500,
+		)
+	}
+
+	// Verify the owner key belongs to the authenticated user
+	if ownerKey.OwnerEntity != userSub {
+		return apperrors.New(
+			apperrors.ErrCodeForbidden,
+			"You do not own this policy",
+			403,
+		)
+	}
+
+	// Verify the owner key is active
+	if ownerKey.Status != types.StatusActive {
+		return apperrors.New(
+			apperrors.ErrCodeForbidden,
+			"Policy owner key is not active",
+			403,
+		)
+	}
+
+	// Verify signature with the owner key
+	publicKeyPEM, err := auth.PublicKeyToPEM(ownerKey.PublicKey)
+	if err != nil {
+		return apperrors.New(
+			apperrors.ErrCodeInternalError,
+			"Failed to parse owner public key",
+			500,
+		)
+	}
+
+	verifier := auth.NewSignatureVerifier()
+	for _, sig := range signatures {
+		if verified, err := verifier.VerifySignature(sig, canonicalBytes, publicKeyPEM); err == nil && verified {
+			return nil
+		}
+	}
+
+	return apperrors.New(
+		apperrors.ErrCodeForbidden,
+		"Authorization signature verification failed",
+		403,
+	)
 }

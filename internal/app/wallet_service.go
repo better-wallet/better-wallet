@@ -422,18 +422,6 @@ func (s *WalletService) SignTransaction(ctx context.Context, userSub string, req
 		}
 	}
 
-	// Idempotency enforcement (if provided)
-	if req.IdempotencyKey != "" {
-		if err := s.idemRepo.CheckAndRecord(ctx, req.AppID, req.IdempotencyKey, req.HTTPMethod, req.URLPath, req.RequestDigest); err != nil {
-			return nil, apperrors.NewWithDetail(
-				apperrors.ErrCodeConflict,
-				"Idempotency key conflict",
-				err.Error(),
-				409,
-			)
-		}
-	}
-
 	// Load policies - use session signer override if present
 	var policies []*types.Policy
 	if sessionSigner != nil && sessionSigner.PolicyOverrideID != nil {

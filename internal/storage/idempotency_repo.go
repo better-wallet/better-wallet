@@ -22,7 +22,10 @@ func NewIdempotencyRepo(store *Store) *IdempotencyRepo {
 
 // IdempotencyRecord represents a cached idempotency record
 type IdempotencyRecord struct {
+	AppID      string
 	Key        string
+	Method     string // HTTP method (POST, PATCH, DELETE)
+	URL        string // Request URL path
 	BodyHash   string
 	StatusCode int
 	Headers    http.Header
@@ -31,19 +34,21 @@ type IdempotencyRecord struct {
 	CreatedAt  time.Time
 }
 
-// Get retrieves an idempotency record by key
+// Get retrieves an idempotency record by app_id, key, method, and url
 // Returns error if not found or expired
-func (r *IdempotencyRepo) Get(ctx context.Context, key string) (*IdempotencyRecord, error) {
+func (r *IdempotencyRepo) Get(ctx context.Context, appID, key, method, url string) (*IdempotencyRecord, error) {
 	query := `
-		SELECT body_hash, status_code, headers, body, expires_at, created_at
+		SELECT method, url, body_hash, status_code, headers, body, expires_at, created_at
 		FROM idempotency_records
-		WHERE key = $1 AND expires_at > NOW()
+		WHERE app_id = $1 AND key = $2 AND method = $3 AND url = $4 AND expires_at > NOW()
 	`
 
 	var record IdempotencyRecord
 	var headersJSON []byte
 
-	err := r.store.pool.QueryRow(ctx, query, key).Scan(
+	err := r.store.pool.QueryRow(ctx, query, appID, key, method, url).Scan(
+		&record.Method,
+		&record.URL,
 		&record.BodyHash,
 		&record.StatusCode,
 		&headersJSON,
@@ -59,6 +64,7 @@ func (r *IdempotencyRepo) Get(ctx context.Context, key string) (*IdempotencyReco
 		return nil, fmt.Errorf("failed to get idempotency record: %w", err)
 	}
 
+	record.AppID = appID
 	record.Key = key
 
 	// Parse headers from JSON
@@ -73,16 +79,19 @@ func (r *IdempotencyRepo) Get(ctx context.Context, key string) (*IdempotencyReco
 func (r *IdempotencyRepo) Store(ctx context.Context, record *IdempotencyRecord) error {
 	query := `
 		INSERT INTO idempotency_records (
-			key, body_hash, status_code, headers, body, expires_at, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7)
-		ON CONFLICT (key) DO NOTHING
+			app_id, key, method, url, body_hash, status_code, headers, body, expires_at, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		ON CONFLICT (app_id, key, method, url) DO NOTHING
 	`
 
 	// Simple header storage (in production, use proper JSONB encoding)
 	var headersJSON []byte = []byte("{}")
 
 	_, err := r.store.pool.Exec(ctx, query,
+		record.AppID,
 		record.Key,
+		record.Method,
+		record.URL,
 		record.BodyHash,
 		record.StatusCode,
 		headersJSON,
@@ -99,16 +108,16 @@ func (r *IdempotencyRepo) Store(ctx context.Context, record *IdempotencyRecord) 
 }
 
 // Exists checks if an idempotency key exists (without retrieving full record)
-func (r *IdempotencyRepo) Exists(ctx context.Context, key string) (bool, error) {
+func (r *IdempotencyRepo) Exists(ctx context.Context, appID, key string) (bool, error) {
 	query := `
 		SELECT EXISTS(
 			SELECT 1 FROM idempotency_records
-			WHERE key = $1 AND expires_at > NOW()
+			WHERE app_id = $1 AND key = $2 AND expires_at > NOW()
 		)
 	`
 
 	var exists bool
-	err := r.store.pool.QueryRow(ctx, query, key).Scan(&exists)
+	err := r.store.pool.QueryRow(ctx, query, appID, key).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("failed to check idempotency key: %w", err)
 	}
@@ -164,7 +173,7 @@ func (r *IdempotencyRepository) CheckAndRecord(ctx context.Context, appID, key, 
 	if newTableExists {
 		// Use new implementation
 		repo := &IdempotencyRepo{store: r.store}
-		exists, err := repo.Exists(ctx, key)
+		exists, err := repo.Exists(ctx, appID, key)
 		if err != nil {
 			return err
 		}
@@ -174,6 +183,7 @@ func (r *IdempotencyRepository) CheckAndRecord(ctx context.Context, appID, key, 
 
 		// Store a minimal record
 		return repo.Store(ctx, &IdempotencyRecord{
+			AppID:      appID,
 			Key:        key,
 			BodyHash:   requestDigest,
 			StatusCode: 200,

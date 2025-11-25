@@ -60,7 +60,7 @@ type Policy struct {
 	ChainType string                 `json:"chain_type"`
 	Version   string                 `json:"version"`
 	Rules     map[string]interface{} `json:"rules"`
-	OwnerID   uuid.UUID              `json:"owner_id"`
+	OwnerID   uuid.UUID              `json:"owner_id"` // Authorization key ID that owns this policy
 	CreatedAt time.Time              `json:"created_at"`
 }
 

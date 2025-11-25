@@ -690,12 +690,64 @@ func convertAdditionalSigners(signers *[]AdditionalSigner) *[]app.AdditionalSign
 	return &result
 }
 
-// handleExportWallet exports the private key for a wallet
+// ExportWalletRequest represents the request to export a wallet with HPKE encryption
+type ExportWalletRequest struct {
+	EncryptionType      string `json:"encryption_type"`       // Must be "HPKE"
+	RecipientPublicKey  string `json:"recipient_public_key"`  // Base64-encoded P-256 public key
+}
+
+// ExportWalletResponse represents the encrypted wallet export response
+type ExportWalletResponse struct {
+	ID              uuid.UUID `json:"id"`
+	EncryptionType  string    `json:"encryption_type"`  // Always "HPKE"
+	Ciphertext      string    `json:"ciphertext"`       // Base64-encoded encrypted private key
+	EncapsulatedKey string    `json:"encapsulated_key"` // Base64-encoded ephemeral public key
+	ExportedAt      int64     `json:"exported_at"`      // Unix timestamp in milliseconds
+}
+
+// handleExportWallet exports the private key for a wallet with HPKE encryption
 // POST /v1/wallets/{id}/export
 func (s *Server) handleExportWallet(w http.ResponseWriter, r *http.Request, walletID uuid.UUID) {
 	userSub, ok := getUserSub(r.Context())
 	if !ok {
 		s.writeError(w, apperrors.ErrUnauthorized)
+		return
+	}
+
+	// Parse request body
+	var req ExportWalletRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeBadRequest,
+			"Invalid request body",
+			err.Error(),
+			http.StatusBadRequest,
+		))
+		return
+	}
+
+	// Validate encryption type
+	if req.EncryptionType == "" {
+		req.EncryptionType = "HPKE"
+	}
+	if req.EncryptionType != "HPKE" {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeBadRequest,
+			"Invalid encryption type",
+			"Only HPKE encryption is supported",
+			http.StatusBadRequest,
+		))
+		return
+	}
+
+	// Validate recipient public key
+	if req.RecipientPublicKey == "" {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeBadRequest,
+			"Missing recipient public key",
+			"recipient_public_key is required for HPKE encryption",
+			http.StatusBadRequest,
+		))
 		return
 	}
 
@@ -775,6 +827,18 @@ func (s *Server) handleExportWallet(w http.ResponseWriter, r *http.Request, wall
 		return
 	}
 
+	// Encrypt the private key with HPKE
+	encrypted, err := s.hpkeEncrypt(req.RecipientPublicKey, []byte(privateKeyHex))
+	if err != nil {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeInternalError,
+			"Failed to encrypt private key",
+			err.Error(),
+			http.StatusInternalServerError,
+		))
+		return
+	}
+
 	// Mark wallet as exported
 	now := time.Now()
 	if _, err := s.store.DB().Exec(
@@ -786,10 +850,12 @@ func (s *Server) handleExportWallet(w http.ResponseWriter, r *http.Request, wall
 		// Log but don't fail - export succeeded
 	}
 
-	response := map[string]interface{}{
-		"id":          walletID,
-		"private_key": privateKeyHex,
-		"exported_at": now.UnixMilli(),
+	response := ExportWalletResponse{
+		ID:              walletID,
+		EncryptionType:  encrypted.EncryptionType,
+		Ciphertext:      encrypted.Ciphertext,
+		EncapsulatedKey: encrypted.EncapsulatedKey,
+		ExportedAt:      now.UnixMilli(),
 	}
 
 	s.writeJSON(w, http.StatusOK, response)
