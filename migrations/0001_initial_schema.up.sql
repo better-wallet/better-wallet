@@ -165,7 +165,26 @@ CREATE TABLE idempotency_keys (
 CREATE INDEX idx_idempotency_keys_expires ON idempotency_keys(expires_at);
 CREATE INDEX idx_idempotency_keys_status ON idempotency_keys(status);
 
+-- Idempotency records table for response caching
+-- Store first response for 24 hours to prevent duplicate operations
+CREATE TABLE idempotency_records (
+    id BIGSERIAL PRIMARY KEY,
+    key VARCHAR(256) UNIQUE NOT NULL,
+    body_hash VARCHAR(64) NOT NULL,
+    status_code INTEGER NOT NULL,
+    headers JSONB NOT NULL DEFAULT '{}',
+    body BYTEA NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMP NOT NULL
+);
+
+CREATE INDEX idx_idempotency_records_expires_at ON idempotency_records(expires_at);
+CREATE INDEX idx_idempotency_records_key ON idempotency_records(key) WHERE expires_at > NOW();
+
 -- Comments
 COMMENT ON TABLE authorization_keys IS 'Public keys for owner signature verification. Only P-256 is supported';
 COMMENT ON TABLE idempotency_keys IS 'Idempotency keys for write operations to prevent duplicate requests (v0.7.0+)';
+COMMENT ON TABLE idempotency_records IS 'Stores idempotency records with cached responses. Records expire after 24 hours.';
+COMMENT ON COLUMN idempotency_records.key IS 'The idempotency key from x-idempotency-key header (max 256 chars, recommended UUIDv4)';
+COMMENT ON COLUMN idempotency_records.body_hash IS 'SHA-256 hash of the request body to detect reused keys with different bodies';
 COMMENT ON COLUMN audit_logs.request_nonce IS 'Deprecated in v0.7.0 - replaced with idempotency keys';

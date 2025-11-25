@@ -157,3 +157,13 @@ func (r *AuthorizationKeyRepository) UpdateStatus(ctx context.Context, id uuid.U
 
 	return nil
 }
+
+// RotateKey marks a key as rotated
+func (r *AuthorizationKeyRepository) RotateKey(ctx context.Context, id uuid.UUID) error {
+	return r.UpdateStatus(ctx, id, types.StatusRotated)
+}
+
+// RevokeKey marks a key as revoked
+func (r *AuthorizationKeyRepository) RevokeKey(ctx context.Context, id uuid.UUID) error {
+	return r.UpdateStatus(ctx, id, types.StatusRevoked)
+}

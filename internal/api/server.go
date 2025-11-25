@@ -9,6 +9,7 @@ import (
 	"github.com/better-wallet/better-wallet/internal/app"
 	"github.com/better-wallet/better-wallet/internal/config"
 	"github.com/better-wallet/better-wallet/internal/middleware"
+	"github.com/better-wallet/better-wallet/internal/storage"
 )
 
 // Server represents the HTTP server
@@ -18,6 +19,7 @@ type Server struct {
 	appAuthMiddleware  *middleware.AppAuthMiddleware
 	userAuthMiddleware *middleware.AuthMiddleware
 	httpServer         *http.Server
+	store              *storage.Store
 }
 
 // NewServer creates a new API server
@@ -26,12 +28,14 @@ func NewServer(
 	walletService *app.WalletService,
 	appAuthMiddleware *middleware.AppAuthMiddleware,
 	userAuthMiddleware *middleware.AuthMiddleware,
+	store *storage.Store,
 ) *Server {
 	return &Server{
 		config:             cfg,
 		walletService:      walletService,
 		appAuthMiddleware:  appAuthMiddleware,
 		userAuthMiddleware: userAuthMiddleware,
+		store:              store,
 	}
 }
 
@@ -53,6 +57,56 @@ func (s *Server) Start() error {
 		s.appAuthMiddleware.Authenticate(
 			s.userAuthMiddleware.Authenticate(
 				http.HandlerFunc(s.handleWalletOperationsRouter))))
+
+	// Policy management routes
+	mux.Handle("/v1/policies",
+		s.appAuthMiddleware.Authenticate(
+			s.userAuthMiddleware.Authenticate(http.HandlerFunc(s.handlePolicies))))
+
+	mux.Handle("/v1/policies/",
+		s.appAuthMiddleware.Authenticate(
+			s.userAuthMiddleware.Authenticate(
+				http.HandlerFunc(s.handlePolicyOperations))))
+
+	// Key quorum management routes
+	mux.Handle("/v1/key-quorums",
+		s.appAuthMiddleware.Authenticate(
+			s.userAuthMiddleware.Authenticate(http.HandlerFunc(s.handleKeyQuorums))))
+
+	mux.Handle("/v1/key-quorums/",
+		s.appAuthMiddleware.Authenticate(
+			s.userAuthMiddleware.Authenticate(
+				http.HandlerFunc(s.handleKeyQuorumOperations))))
+
+	// User management routes
+	mux.Handle("/v1/users",
+		s.appAuthMiddleware.Authenticate(
+			s.userAuthMiddleware.Authenticate(http.HandlerFunc(s.handleUsers))))
+
+	mux.Handle("/v1/users/",
+		s.appAuthMiddleware.Authenticate(
+			s.userAuthMiddleware.Authenticate(
+				http.HandlerFunc(s.handleUserOperations))))
+
+	// Transaction query routes
+	mux.Handle("/v1/transactions",
+		s.appAuthMiddleware.Authenticate(
+			s.userAuthMiddleware.Authenticate(http.HandlerFunc(s.handleTransactions))))
+
+	mux.Handle("/v1/transactions/",
+		s.appAuthMiddleware.Authenticate(
+			s.userAuthMiddleware.Authenticate(
+				http.HandlerFunc(s.handleTransactionOperations))))
+
+	// Authorization key management routes
+	mux.Handle("/v1/authorization-keys",
+		s.appAuthMiddleware.Authenticate(
+			s.userAuthMiddleware.Authenticate(http.HandlerFunc(s.handleAuthorizationKeys))))
+
+	mux.Handle("/v1/authorization-keys/",
+		s.appAuthMiddleware.Authenticate(
+			s.userAuthMiddleware.Authenticate(
+				http.HandlerFunc(s.handleAuthorizationKeyOperations))))
 
 	s.httpServer = &http.Server{
 		Addr: fmt.Sprintf(":%d", s.config.Port),

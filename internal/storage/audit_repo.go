@@ -140,3 +140,38 @@ func (r *AuditRepository) Query(ctx context.Context, opts QueryOptions) ([]*type
 
 	return logs, nil
 }
+
+// GetByID retrieves a single audit log by ID
+func (r *AuditRepository) GetByID(ctx context.Context, id int64) (*types.AuditLog, error) {
+	query := `
+		SELECT id, actor, action, resource_type, resource_id, policy_result,
+		       signer_id, tx_hash, request_digest, request_nonce, client_ip, user_agent, created_at
+		FROM audit_logs
+		WHERE id = $1
+	`
+
+	var log types.AuditLog
+	err := r.store.pool.QueryRow(ctx, query, id).Scan(
+		&log.ID,
+		&log.Actor,
+		&log.Action,
+		&log.ResourceType,
+		&log.ResourceID,
+		&log.PolicyResult,
+		&log.SignerID,
+		&log.TxHash,
+		&log.RequestDigest,
+		&log.RequestNonce,
+		&log.ClientIP,
+		&log.UserAgent,
+		&log.CreatedAt,
+	)
+	if err != nil {
+		if err.Error() == "no rows in result set" {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get audit log: %w", err)
+	}
+
+	return &log, nil
+}

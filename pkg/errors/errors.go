@@ -44,6 +44,7 @@ const (
 	ErrCodeKeyOperationFailed  = "key_operation_failed"
 	ErrCodeChainNotSupported   = "chain_not_supported"
 	ErrCodeTransactionFailed   = "transaction_failed"
+	ErrCodeIdempotencyKeyReused = "idempotency_key_reused"
 )
 
 // Predefined errors

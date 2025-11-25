@@ -61,7 +61,7 @@ func main() {
 	userAuthMiddleware := middleware.NewAuthMiddleware(cfg)
 
 	// Initialize API server
-	server := api.NewServer(cfg, walletService, appAuthMiddleware, userAuthMiddleware)
+	server := api.NewServer(cfg, walletService, appAuthMiddleware, userAuthMiddleware, store)
 
 	// Start server in a goroutine
 	serverErrors := make(chan error, 1)
