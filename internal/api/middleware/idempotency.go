@@ -28,8 +28,8 @@ func NewIdempotencyMiddleware(repo *storage.IdempotencyRepo) *IdempotencyMiddlew
 // Handle wraps an HTTP handler with idempotency checking
 func (m *IdempotencyMiddleware) Handle(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Only apply to POST requests (mutations)
-		if r.Method != http.MethodPost {
+		// Only apply to mutation requests (POST, PATCH, DELETE)
+		if r.Method != http.MethodPost && r.Method != http.MethodPatch && r.Method != http.MethodDelete {
 			next.ServeHTTP(w, r)
 			return
 		}

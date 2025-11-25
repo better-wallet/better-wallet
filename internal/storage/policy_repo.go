@@ -142,6 +142,22 @@ func (r *PolicyRepository) AttachToWallet(ctx context.Context, walletID, policyI
 	return nil
 }
 
+// AttachToWalletTx attaches a policy to a wallet within a transaction
+func (r *PolicyRepository) AttachToWalletTx(ctx context.Context, tx pgx.Tx, walletID, policyID uuid.UUID) error {
+	query := `
+		INSERT INTO wallet_policies (wallet_id, policy_id)
+		VALUES ($1, $2)
+		ON CONFLICT DO NOTHING
+	`
+
+	_, err := tx.Exec(ctx, query, walletID, policyID)
+	if err != nil {
+		return fmt.Errorf("failed to attach policy to wallet: %w", err)
+	}
+
+	return nil
+}
+
 // DetachFromWallet removes a policy association from a wallet
 func (r *PolicyRepository) DetachFromWallet(ctx context.Context, walletID, policyID uuid.UUID) error {
 	query := `

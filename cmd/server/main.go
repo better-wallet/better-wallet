@@ -59,9 +59,11 @@ func main() {
 	// Initialize middleware
 	appAuthMiddleware := middleware.NewAppAuthMiddleware(cfg)
 	userAuthMiddleware := middleware.NewAuthMiddleware(cfg)
+	idempotencyRepo := storage.NewIdempotencyRepo(store)
+	idempotencyMiddleware := middleware.NewIdempotencyMiddleware(idempotencyRepo)
 
 	// Initialize API server
-	server := api.NewServer(cfg, walletService, appAuthMiddleware, userAuthMiddleware, store)
+	server := api.NewServer(cfg, walletService, appAuthMiddleware, userAuthMiddleware, idempotencyMiddleware, store)
 
 	// Start server in a goroutine
 	serverErrors := make(chan error, 1)

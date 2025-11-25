@@ -314,19 +314,30 @@ func (s *Server) handleCreateWallet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// For now, use existing CreateWallet service method
-	// TODO: Extend to support policy_ids and additional_signers
+	// Prepare create wallet request
 	var ownerPublicKey string
 	if req.Owner != nil {
 		ownerPublicKey = req.Owner.PublicKey
 	}
 
+	// Convert AdditionalSigners from API format to app format
+	additionalSigners := make([]app.AdditionalSigner, len(req.AdditionalSigners))
+	for i, signer := range req.AdditionalSigners {
+		additionalSigners[i] = app.AdditionalSigner{
+			SignerID:          signer.SignerID,
+			OverridePolicyIDs: signer.OverridePolicyIDs,
+		}
+	}
+
 	wallet, err := s.walletService.CreateWallet(r.Context(), &app.CreateWalletRequest{
-		UserSub:        userSub,
-		ChainType:      req.ChainType,
-		OwnerPublicKey: ownerPublicKey,
-		OwnerAlgorithm: types.AlgorithmP256,
-		ExecBackend:    types.ExecBackendKMS,
+		UserSub:           userSub,
+		ChainType:         req.ChainType,
+		OwnerPublicKey:    ownerPublicKey,
+		OwnerAlgorithm:    types.AlgorithmP256,
+		OwnerID:           req.OwnerID,
+		ExecBackend:       types.ExecBackendKMS,
+		PolicyIDs:         req.PolicyIDs,
+		AdditionalSigners: additionalSigners,
 	})
 	if err != nil {
 		s.writeError(w, apperrors.NewWithDetail(

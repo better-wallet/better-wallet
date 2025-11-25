@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"crypto/elliptic"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -17,7 +19,9 @@ import (
 	apperrors "github.com/better-wallet/better-wallet/pkg/errors"
 	"github.com/better-wallet/better-wallet/pkg/types"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/signer/core/apitypes"
 	"github.com/google/uuid"
 )
 
@@ -57,11 +61,14 @@ func NewWalletService(
 
 // CreateWalletRequest represents a request to create a wallet
 type CreateWalletRequest struct {
-	UserSub        string
-	ChainType      string
-	OwnerPublicKey string // Hex-encoded public key
-	OwnerAlgorithm string // "p256"
-	ExecBackend    string
+	UserSub           string
+	ChainType         string
+	OwnerPublicKey    string            // Hex-encoded public key (if creating new owner)
+	OwnerAlgorithm    string            // "p256" (if creating new owner)
+	OwnerID           *uuid.UUID        // Existing authorization key or quorum ID
+	ExecBackend       string
+	PolicyIDs         []uuid.UUID       // Policy IDs to attach
+	AdditionalSigners []AdditionalSigner // Session signers to create
 }
 
 // ListWalletsRequest represents a request to list wallets
@@ -103,30 +110,63 @@ func (s *WalletService) CreateWallet(ctx context.Context, req *CreateWalletReque
 		return nil, fmt.Errorf("failed to get or create user: %w", err)
 	}
 
-	// Decode and validate owner public key
-	publicKeyBytes := common.FromHex(req.OwnerPublicKey)
-	if len(publicKeyBytes) == 0 {
-		return nil, fmt.Errorf("invalid owner public key hex")
-	}
+	// Determine owner ID - either use existing or create new
+	var ownerID uuid.UUID
+	var authKey *types.AuthorizationKey
 
-	// Validate public key format based on algorithm
-	// Only P-256 is supported for production use
-	if req.OwnerAlgorithm != types.AlgorithmP256 {
-		return nil, fmt.Errorf("unsupported algorithm: %s (only 'p256' is supported)", req.OwnerAlgorithm)
-	}
+	if req.OwnerID != nil {
+		// Use existing authorization key or quorum
+		ownerID = *req.OwnerID
 
-	// P-256: Validate format and ensure point is on curve
-	if len(publicKeyBytes) != 65 && len(publicKeyBytes) != 33 {
-		return nil, fmt.Errorf("invalid P-256 public key length: expected 65 (uncompressed) or 33 (compressed) bytes, got %d", len(publicKeyBytes))
-	}
+		// Verify owner exists (either authorization key or key quorum)
+		existingKey, err := s.authKeyRepo.GetByID(ctx, ownerID)
+		if err == nil && existingKey != nil {
+			// Owner is an authorization key
+			ownerID = existingKey.ID
+		} else {
+			// Check if it's a key quorum
+			quorumRepo := storage.NewKeyQuorumRepository(s.store)
+			quorum, err := quorumRepo.GetByID(ctx, ownerID)
+			if err != nil || quorum == nil {
+				return nil, fmt.Errorf("owner_id does not reference a valid authorization key or key quorum")
+			}
+			ownerID = quorum.ID
+		}
+	} else if req.OwnerPublicKey != "" {
+		// Create new authorization key
+		publicKeyBytes := common.FromHex(req.OwnerPublicKey)
+		if len(publicKeyBytes) == 0 {
+			return nil, fmt.Errorf("invalid owner public key hex")
+		}
 
-	// Parse and validate the public key
-	x, y := elliptic.Unmarshal(elliptic.P256(), publicKeyBytes)
-	if x == nil {
-		return nil, fmt.Errorf("invalid P-256 public key format: failed to parse")
-	}
-	if !elliptic.P256().IsOnCurve(x, y) {
-		return nil, fmt.Errorf("invalid P-256 public key: point not on curve")
+		// Validate public key format based on algorithm
+		if req.OwnerAlgorithm != types.AlgorithmP256 {
+			return nil, fmt.Errorf("unsupported algorithm: %s (only 'p256' is supported)", req.OwnerAlgorithm)
+		}
+
+		// P-256: Validate format and ensure point is on curve
+		if len(publicKeyBytes) != 65 && len(publicKeyBytes) != 33 {
+			return nil, fmt.Errorf("invalid P-256 public key length: expected 65 (uncompressed) or 33 (compressed) bytes, got %d", len(publicKeyBytes))
+		}
+
+		x, y := elliptic.Unmarshal(elliptic.P256(), publicKeyBytes)
+		if x == nil {
+			return nil, fmt.Errorf("invalid P-256 public key format: failed to parse")
+		}
+		if !elliptic.P256().IsOnCurve(x, y) {
+			return nil, fmt.Errorf("invalid P-256 public key: point not on curve")
+		}
+
+		authKey = &types.AuthorizationKey{
+			ID:          uuid.New(),
+			PublicKey:   publicKeyBytes,
+			Algorithm:   req.OwnerAlgorithm,
+			OwnerEntity: req.UserSub,
+			Status:      types.StatusActive,
+		}
+		ownerID = authKey.ID
+	} else {
+		return nil, fmt.Errorf("must provide either owner_id or owner_public_key")
 	}
 
 	// Generate and split key
@@ -135,19 +175,15 @@ func (s *WalletService) CreateWallet(ctx context.Context, req *CreateWalletReque
 		return nil, fmt.Errorf("failed to generate key: %w", err)
 	}
 
-	// Encrypt the auth share before storing
+	// Encrypt shares
 	encryptedAuthShare, err := s.keyExec.Encrypt(ctx, keyMaterial.AuthShare)
 	if err != nil {
 		return nil, fmt.Errorf("failed to encrypt auth share: %w", err)
 	}
 
-	// Create authorization key
-	authKey := &types.AuthorizationKey{
-		ID:          uuid.New(),
-		PublicKey:   publicKeyBytes,
-		Algorithm:   req.OwnerAlgorithm,
-		OwnerEntity: req.UserSub,
-		Status:      types.StatusActive,
+	encryptedExecShare, err := s.keyExec.Encrypt(ctx, keyMaterial.ExecShare)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encrypt exec share: %w", err)
 	}
 
 	// Create wallet record
@@ -155,7 +191,7 @@ func (s *WalletService) CreateWallet(ctx context.Context, req *CreateWalletReque
 		ID:          uuid.New(),
 		UserID:      user.ID,
 		ChainType:   req.ChainType,
-		OwnerID:     authKey.ID, // Reference the authorization key
+		OwnerID:     ownerID,
 		ExecBackend: req.ExecBackend,
 		Address:     keyMaterial.Address,
 	}
@@ -167,46 +203,67 @@ func (s *WalletService) CreateWallet(ctx context.Context, req *CreateWalletReque
 	}
 	defer tx.Rollback(ctx)
 
-	// Create authorization key first
-	authKeyRepo := storage.NewAuthorizationKeyRepository(s.store)
-	if err := authKeyRepo.CreateTx(ctx, tx, authKey); err != nil {
-		return nil, fmt.Errorf("failed to create authorization key: %w", err)
+	// Create authorization key if new
+	if authKey != nil {
+		if err := s.authKeyRepo.CreateTx(ctx, tx, authKey); err != nil {
+			return nil, fmt.Errorf("failed to create authorization key: %w", err)
+		}
 	}
 
-	// Create wallet using transaction
+	// Create wallet
 	if err := s.walletRepo.CreateTx(ctx, tx, wallet); err != nil {
 		return nil, fmt.Errorf("failed to create wallet: %w", err)
 	}
 
 	// Store wallet shares
 	shareRepo := storage.NewWalletShareRepository(s.store)
-	authShare := &types.WalletShare{
+	if err := shareRepo.CreateTx(ctx, tx, &types.WalletShare{
 		WalletID:      wallet.ID,
 		ShareType:     types.ShareTypeAuth,
 		BlobEncrypted: encryptedAuthShare,
 		Version:       1,
-	}
-
-	if err := shareRepo.CreateTx(ctx, tx, authShare); err != nil {
+	}); err != nil {
 		return nil, fmt.Errorf("failed to store auth share: %w", err)
 	}
 
-	// For KMS mode, store exec share in database as well (encrypted)
-	// In production, this might be stored differently based on backend
-	encryptedExecShare, err := s.keyExec.Encrypt(ctx, keyMaterial.ExecShare)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encrypt exec share: %w", err)
-	}
-
-	execShare := &types.WalletShare{
+	if err := shareRepo.CreateTx(ctx, tx, &types.WalletShare{
 		WalletID:      wallet.ID,
 		ShareType:     types.ShareTypeExec,
 		BlobEncrypted: encryptedExecShare,
 		Version:       1,
+	}); err != nil {
+		return nil, fmt.Errorf("failed to store exec share: %w", err)
 	}
 
-	if err := shareRepo.CreateTx(ctx, tx, execShare); err != nil {
-		return nil, fmt.Errorf("failed to store exec share: %w", err)
+	// Attach policies
+	if len(req.PolicyIDs) > 0 {
+		for _, policyID := range req.PolicyIDs {
+			if err := s.policyRepo.AttachToWalletTx(ctx, tx, wallet.ID, policyID); err != nil {
+				return nil, fmt.Errorf("failed to attach policy %s: %w", policyID, err)
+			}
+		}
+	}
+
+	// Create additional signers (session signers)
+	if len(req.AdditionalSigners) > 0 {
+		for _, signer := range req.AdditionalSigners {
+			sessionSigner := &types.SessionSigner{
+				ID:           uuid.New(),
+				WalletID:     wallet.ID,
+				SignerID:     signer.SignerID.String(),
+				TTLExpiresAt: time.Now().Add(24 * time.Hour), // Default 24h
+			}
+
+			if len(signer.OverridePolicyIDs) > 0 {
+				// Store first override policy ID
+				policyID := signer.OverridePolicyIDs[0]
+				sessionSigner.PolicyOverrideID = &policyID
+			}
+
+			if err := s.sessionRepo.CreateTx(ctx, tx, sessionSigner); err != nil {
+				return nil, fmt.Errorf("failed to create session signer: %w", err)
+			}
+		}
 	}
 
 	// Commit transaction
@@ -214,7 +271,7 @@ func (s *WalletService) CreateWallet(ctx context.Context, req *CreateWalletReque
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	// Audit log with client context
+	// Audit log
 	s.auditRepo.Create(ctx, &types.AuditLog{
 		Actor:        req.UserSub,
 		Action:       "wallet.create",
@@ -317,6 +374,54 @@ func (s *WalletService) SignTransaction(ctx context.Context, userSub string, req
 		return nil, err
 	}
 
+	// Check if signed by session signer and enforce limits
+	var sessionSigner *types.SessionSigner
+	if matchedSignerID != "" && matchedSignerID != wallet.OwnerID.String() {
+		// Matched a session signer - load it and check limits
+		signerUUID, err := uuid.Parse(matchedSignerID)
+		if err == nil {
+			sessionSigner, err = s.sessionRepo.GetByID(ctx, signerUUID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to load session signer: %w", err)
+			}
+
+			if sessionSigner != nil {
+				// Enforce max_value limit
+				if sessionSigner.MaxValue != nil {
+					maxValue := new(big.Int)
+					if _, ok := maxValue.SetString(*sessionSigner.MaxValue, 10); ok {
+						if req.Value.Cmp(maxValue) > 0 {
+							return nil, apperrors.NewWithDetail(
+								apperrors.ErrCodeForbidden,
+								"Transaction value exceeds session signer limit",
+								fmt.Sprintf("max_value: %s, requested: %s", *sessionSigner.MaxValue, req.Value.String()),
+								http.StatusForbidden,
+							)
+						}
+					}
+				}
+
+				// Enforce max_txs limit
+				if sessionSigner.MaxTxs != nil {
+					// Count transactions signed by this signer
+					txCount, err := s.auditRepo.CountBySessionSigner(ctx, sessionSigner.ID.String())
+					if err != nil {
+						return nil, fmt.Errorf("failed to count session signer transactions: %w", err)
+					}
+
+					if txCount >= *sessionSigner.MaxTxs {
+						return nil, apperrors.NewWithDetail(
+							apperrors.ErrCodeForbidden,
+							"Session signer has reached transaction limit",
+							fmt.Sprintf("max_txs: %d, current: %d", *sessionSigner.MaxTxs, txCount),
+							http.StatusForbidden,
+						)
+					}
+				}
+			}
+		}
+	}
+
 	// Idempotency enforcement (if provided)
 	if req.IdempotencyKey != "" {
 		if err := s.idemRepo.CheckAndRecord(ctx, req.AppID, req.IdempotencyKey, req.HTTPMethod, req.URLPath, req.RequestDigest); err != nil {
@@ -329,21 +434,37 @@ func (s *WalletService) SignTransaction(ctx context.Context, userSub string, req
 		}
 	}
 
-	// Load policies associated with this wallet
-	policies, err := s.policyRepo.GetByWalletID(ctx, wallet.ID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load policies: %w", err)
+	// Load policies - use session signer override if present
+	var policies []*types.Policy
+	if sessionSigner != nil && sessionSigner.PolicyOverrideID != nil {
+		// Session signer has policy override - use only that policy
+		policy, err := s.policyRepo.GetByID(ctx, *sessionSigner.PolicyOverrideID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load override policy: %w", err)
+		}
+		if policy != nil {
+			policies = []*types.Policy{policy}
+		}
+	} else {
+		// Use wallet's policies
+		var err error
+		policies, err = s.policyRepo.GetByWalletID(ctx, wallet.ID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load policies: %w", err)
+		}
 	}
 
 	// Evaluate policies
 	evalCtx := &policy.EvaluationContext{
-		WalletID:  wallet.ID.String(),
-		ChainType: wallet.ChainType,
-		Address:   wallet.Address,
-		To:        &req.To,
-		Value:     req.Value,
-		Data:      req.Data,
-		Actor:     userSub,
+		WalletID:      wallet.ID.String(),
+		ChainType:     wallet.ChainType,
+		Address:       wallet.Address,
+		To:            &req.To,
+		Value:         req.Value,
+		Data:          req.Data,
+		Actor:         userSub,
+		SessionSigner: sessionSigner,
+		Timestamp:     time.Now(),
 	}
 
 	result, err := s.policyEng.Evaluate(ctx, policies, evalCtx)
@@ -646,6 +767,79 @@ func (s *WalletService) verifyAuthorizationSignature(ctx context.Context, wallet
 		)
 	}
 
+	// Check if owner is a key quorum
+	quorumRepo := storage.NewKeyQuorumRepository(s.store)
+	quorum, err := quorumRepo.GetByID(ctx, wallet.OwnerID)
+
+	if err == nil && quorum != nil {
+		// Owner is a key quorum - verify M-of-N signatures
+		return s.verifyQuorumSignatures(ctx, quorum, signatures, canonicalPayload)
+	}
+
+	// Owner is a single authorization key - verify single signature or session signer
+	return s.verifySingleOwnerSignature(ctx, wallet, signatures, canonicalPayload)
+}
+
+// verifyQuorumSignatures verifies M-of-N threshold signatures for a key quorum
+func (s *WalletService) verifyQuorumSignatures(ctx context.Context, quorum *types.KeyQuorum, signatures []string, canonicalPayload []byte) (string, error) {
+	if quorum.Status != types.StatusActive {
+		return "", apperrors.NewWithDetail(
+			apperrors.ErrCodeForbidden,
+			"Quorum is not active",
+			fmt.Sprintf("quorum %s has status %s", quorum.ID, quorum.Status),
+			http.StatusForbidden,
+		)
+	}
+
+	// Track which quorum keys have been verified
+	verifiedKeys := make(map[uuid.UUID]bool)
+	verifier := auth.NewSignatureVerifier()
+
+	// Try to match each signature against each quorum key
+	for _, sig := range signatures {
+		for _, keyID := range quorum.KeyIDs {
+			// Skip if already verified this key
+			if verifiedKeys[keyID] {
+				continue
+			}
+
+			authKey, err := s.authKeyRepo.GetByID(ctx, keyID)
+			if err != nil || authKey == nil || authKey.Status != types.StatusActive {
+				continue
+			}
+
+			if authKey.Algorithm != types.AlgorithmP256 {
+				continue
+			}
+
+			publicKeyPEM, err := auth.PublicKeyToPEM(authKey.PublicKey)
+			if err != nil {
+				continue
+			}
+
+			if verified, err := verifier.VerifySignature(sig, canonicalPayload, publicKeyPEM); err == nil && verified {
+				verifiedKeys[keyID] = true
+				break // This signature matched, move to next signature
+			}
+		}
+	}
+
+	// Check if threshold is met
+	if len(verifiedKeys) < quorum.Threshold {
+		return "", apperrors.NewWithDetail(
+			apperrors.ErrCodeForbidden,
+			"Insufficient signatures for quorum",
+			fmt.Sprintf("required %d signatures, got %d valid signatures", quorum.Threshold, len(verifiedKeys)),
+			http.StatusForbidden,
+		)
+	}
+
+	// Return quorum ID as matched signer
+	return quorum.ID.String(), nil
+}
+
+// verifySingleOwnerSignature verifies signature for a single owner key or session signer
+func (s *WalletService) verifySingleOwnerSignature(ctx context.Context, wallet *types.Wallet, signatures []string, canonicalPayload []byte) (string, error) {
 	// Build list of allowed authorization keys
 	allowed := make(map[uuid.UUID]*types.SessionSigner)
 	allowed[wallet.OwnerID] = nil // nil indicates primary owner
@@ -679,17 +873,18 @@ func (s *WalletService) verifyAuthorizationSignature(ctx context.Context, wallet
 	}
 
 	// Iterate signatures and try to verify against allowed keys
+	verifier := auth.NewSignatureVerifier()
 	for _, sig := range signatures {
 		for keyID, ss := range allowed {
 			authKey, err := s.authKeyRepo.GetByID(ctx, keyID)
 			if err != nil {
-				return "", fmt.Errorf("failed to load authorization key: %w", err)
+				continue
 			}
 			if authKey == nil || authKey.Status != types.StatusActive {
 				continue
 			}
 			if authKey.Algorithm != types.AlgorithmP256 {
-				return "", fmt.Errorf("unsupported algorithm for authorization key %s: %s", keyID, authKey.Algorithm)
+				continue
 			}
 
 			// Convert public key to PEM format for verification
@@ -699,7 +894,6 @@ func (s *WalletService) verifyAuthorizationSignature(ctx context.Context, wallet
 			}
 
 			// Verify signature using auth package
-			verifier := auth.NewSignatureVerifier()
 			if verified, err := verifier.VerifySignature(sig, canonicalPayload, publicKeyPEM); err == nil && verified {
 				// Additional session signer checks (TTL/revoked already filtered in query)
 				if ss != nil && ss.TTLExpiresAt.Before(time.Now()) {
@@ -1070,4 +1264,111 @@ func (s *WalletService) SignMessage(ctx context.Context, walletID uuid.UUID, mes
 
 	// For now, return placeholder indicating feature needs implementation
 	return "", fmt.Errorf("message signing not yet fully implemented")
+}
+
+// TypedData represents EIP-712 typed data structure
+type TypedData struct {
+	Types       map[string]interface{} `json:"types"`
+	PrimaryType string                 `json:"primaryType"`
+	Domain      map[string]interface{} `json:"domain"`
+	Message     map[string]interface{} `json:"message"`
+}
+
+// SignTypedData signs EIP-712 typed data
+func (s *WalletService) SignTypedData(ctx context.Context, walletID uuid.UUID, typedData TypedData) (string, error) {
+	// Get wallet
+	wallet, err := s.walletRepo.GetByID(ctx, walletID)
+	if err != nil {
+		return "", fmt.Errorf("failed to get wallet: %w", err)
+	}
+	if wallet == nil {
+		return "", fmt.Errorf("wallet not found")
+	}
+
+	// Encode typed data according to EIP-712
+	hash, err := encodeTypedData(typedData)
+	if err != nil {
+		return "", fmt.Errorf("failed to encode typed data: %w", err)
+	}
+
+	// Load key material
+	shareRepo := storage.NewWalletShareRepository(s.store)
+	shares, err := shareRepo.GetByWalletID(ctx, wallet.ID)
+	if err != nil {
+		return "", fmt.Errorf("failed to load key shares: %w", err)
+	}
+
+	var authShare, execShare []byte
+	for _, share := range shares {
+		decrypted, err := s.keyExec.Decrypt(ctx, share.BlobEncrypted)
+		if err != nil {
+			return "", fmt.Errorf("failed to decrypt share: %w", err)
+		}
+
+		if share.ShareType == types.ShareTypeAuth {
+			authShare = decrypted
+		} else if share.ShareType == types.ShareTypeExec {
+			execShare = decrypted
+		}
+	}
+
+	keyMaterial := &keyexec.KeyMaterial{
+		Address:   wallet.Address,
+		AuthShare: authShare,
+		ExecShare: execShare,
+		Version:   1,
+	}
+
+	// Use key executor to sign the hash
+	signature, err := s.keyExec.SignMessage(ctx, keyMaterial, hash)
+	if err != nil {
+		return "", fmt.Errorf("failed to sign typed data: %w", err)
+	}
+
+	// Format signature as hex string (0x-prefixed)
+	return formatSignature(signature), nil
+}
+
+// encodeTypedData encodes EIP-712 typed data and returns its hash
+func encodeTypedData(typedData TypedData) ([]byte, error) {
+	// Convert our TypedData to go-ethereum's apitypes.TypedData
+	eip712Data := make(map[string]interface{})
+	eip712Data["types"] = typedData.Types
+	eip712Data["primaryType"] = typedData.PrimaryType
+	eip712Data["domain"] = typedData.Domain
+	eip712Data["message"] = typedData.Message
+
+	// Marshal to JSON
+	jsonData, err := json.Marshal(eip712Data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal typed data: %w", err)
+	}
+
+	// Use go-ethereum's EIP-712 encoding
+	var td apitypes.TypedData
+	if err := json.Unmarshal(jsonData, &td); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal into apitypes.TypedData: %w", err)
+	}
+
+	// Compute the EIP-712 hash
+	domainSeparator, err := td.HashStruct("EIP712Domain", td.Domain.Map())
+	if err != nil {
+		return nil, fmt.Errorf("failed to hash domain: %w", err)
+	}
+
+	typedDataHash, err := td.HashStruct(td.PrimaryType, td.Message)
+	if err != nil {
+		return nil, fmt.Errorf("failed to hash message: %w", err)
+	}
+
+	// EIP-712 final hash: keccak256("\x19\x01" ‖ domainSeparator ‖ hashStruct(message))
+	rawData := []byte(fmt.Sprintf("\x19\x01%s%s", domainSeparator, typedDataHash))
+	hash := crypto.Keccak256(rawData)
+
+	return hash, nil
+}
+
+// formatSignature formats a signature as a hex-encoded string with 0x prefix
+func formatSignature(signature []byte) string {
+	return "0x" + hex.EncodeToString(signature)
 }

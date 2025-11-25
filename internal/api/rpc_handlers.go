@@ -464,17 +464,84 @@ func (s *Server) handleEthSignTypedData(
 		return
 	}
 
-	// TODO: Implement EIP-712 typed data signing
-	// This requires:
-	// 1. Encoding typed data according to EIP-712
-	// 2. Hashing the encoded data
-	// 3. Signing the hash with the wallet's private key
+	// Verify wallet ownership
+	wallet, err := s.walletService.GetWallet(r.Context(), walletID, userSub)
+	if err != nil {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeInternalError,
+			"Failed to get wallet",
+			err.Error(),
+			http.StatusInternalServerError,
+		))
+		return
+	}
+	if wallet == nil {
+		s.writeError(w, apperrors.ErrNotFound)
+		return
+	}
 
-	// For now, return not implemented
-	s.writeError(w, apperrors.NewWithDetail(
-		apperrors.ErrCodeInternalError,
-		"Not implemented",
-		"eth_signTypedData_v4 is not yet implemented",
-		http.StatusNotImplemented,
-	))
+	// Verify authorization signatures
+	owner, err := s.walletService.GetOwner(r.Context(), wallet.OwnerID)
+	if err != nil {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeInternalError,
+			"Failed to get owner",
+			err.Error(),
+			http.StatusInternalServerError,
+		))
+		return
+	}
+
+	verifier := auth.NewSignatureVerifier()
+	if err := verifier.VerifyOwnerSignature(signatures, canonicalBytes, owner); err != nil {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeForbidden,
+			"Invalid authorization signature",
+			err.Error(),
+			http.StatusForbidden,
+		))
+		return
+	}
+
+	// Convert TypedData to app.TypedData
+	typedData := app.TypedData{
+		Types:       convertTypes(p.TypedData.Types),
+		PrimaryType: p.TypedData.PrimaryType,
+		Domain:      p.TypedData.Domain,
+		Message:     p.TypedData.Message,
+	}
+
+	// Sign the typed data
+	signature, err := s.walletService.SignTypedData(r.Context(), walletID, typedData)
+	if err != nil {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeInternalError,
+			"Failed to sign typed data",
+			err.Error(),
+			http.StatusInternalServerError,
+		))
+		return
+	}
+
+	response := map[string]interface{}{
+		"signature": signature,
+	}
+
+	s.writeJSON(w, http.StatusOK, response)
+}
+
+// convertTypes converts the API TypeField structure to app TypedData format
+func convertTypes(types map[string][]TypeField) map[string]interface{} {
+	result := make(map[string]interface{})
+	for typeName, fields := range types {
+		fieldList := make([]map[string]interface{}, len(fields))
+		for i, field := range fields {
+			fieldList[i] = map[string]interface{}{
+				"name": field.Name,
+				"type": field.Type,
+			}
+		}
+		result[typeName] = fieldList
+	}
+	return result
 }

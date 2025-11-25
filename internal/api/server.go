@@ -14,12 +14,13 @@ import (
 
 // Server represents the HTTP server
 type Server struct {
-	config             *config.Config
-	walletService      *app.WalletService
-	appAuthMiddleware  *middleware.AppAuthMiddleware
-	userAuthMiddleware *middleware.AuthMiddleware
-	httpServer         *http.Server
-	store              *storage.Store
+	config                *config.Config
+	walletService         *app.WalletService
+	appAuthMiddleware     *middleware.AppAuthMiddleware
+	userAuthMiddleware    *middleware.AuthMiddleware
+	idempotencyMiddleware *middleware.IdempotencyMiddleware
+	httpServer            *http.Server
+	store                 *storage.Store
 }
 
 // NewServer creates a new API server
@@ -28,14 +29,16 @@ func NewServer(
 	walletService *app.WalletService,
 	appAuthMiddleware *middleware.AppAuthMiddleware,
 	userAuthMiddleware *middleware.AuthMiddleware,
+	idempotencyMiddleware *middleware.IdempotencyMiddleware,
 	store *storage.Store,
 ) *Server {
 	return &Server{
-		config:             cfg,
-		walletService:      walletService,
-		appAuthMiddleware:  appAuthMiddleware,
-		userAuthMiddleware: userAuthMiddleware,
-		store:              store,
+		config:                cfg,
+		walletService:         walletService,
+		appAuthMiddleware:     appAuthMiddleware,
+		userAuthMiddleware:    userAuthMiddleware,
+		idempotencyMiddleware: idempotencyMiddleware,
+		store:                 store,
 	}
 }
 
@@ -110,8 +113,8 @@ func (s *Server) Start() error {
 
 	s.httpServer = &http.Server{
 		Addr: fmt.Sprintf(":%d", s.config.Port),
-		// Chain middleware: AuditContext -> Logging -> Routes
-		Handler:      middleware.AuditContext(s.loggingMiddleware(mux)),
+		// Chain middleware: AuditContext -> Logging -> Idempotency -> Routes
+		Handler:      middleware.AuditContext(s.loggingMiddleware(s.idempotencyMiddleware.Handle(mux))),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,

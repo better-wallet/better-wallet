@@ -175,3 +175,22 @@ func (r *AuditRepository) GetByID(ctx context.Context, id int64) (*types.AuditLo
 
 	return &log, nil
 }
+
+// CountBySessionSigner counts the number of transactions signed by a specific session signer
+func (r *AuditRepository) CountBySessionSigner(ctx context.Context, signerID string) (int, error) {
+	query := `
+		SELECT COUNT(*)
+		FROM audit_logs
+		WHERE signer_id = $1
+		  AND action = 'wallet.sign_transaction'
+		  AND policy_result = 'allow'
+	`
+
+	var count int
+	err := r.store.pool.QueryRow(ctx, query, signerID).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count session signer transactions: %w", err)
+	}
+
+	return count, nil
+}
