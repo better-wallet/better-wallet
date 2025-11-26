@@ -160,3 +160,15 @@ type IdempotencyKey struct {
 	CompletedAt  *time.Time             `json:"completed_at,omitempty"`
 	ExpiresAt    time.Time              `json:"expires_at"`
 }
+
+// ConditionSet represents a reusable set of values for policy conditions
+// Used with the "in_condition_set" operator
+type ConditionSet struct {
+	ID          uuid.UUID     `json:"id"`
+	Name        string        `json:"name"`
+	Description string        `json:"description,omitempty"`
+	Values      []interface{} `json:"values"` // Array of addresses, chain IDs, etc.
+	OwnerID     uuid.UUID     `json:"owner_id"`
+	CreatedAt   time.Time     `json:"created_at"`
+	UpdatedAt   time.Time     `json:"updated_at"`
+}

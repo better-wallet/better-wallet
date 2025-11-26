@@ -112,6 +112,16 @@ func (s *Server) Start() error {
 			s.userAuthMiddleware.Authenticate(
 				http.HandlerFunc(s.handleAuthorizationKeyOperations))))
 
+	// Condition set management routes
+	mux.Handle("/v1/condition_sets",
+		s.appAuthMiddleware.Authenticate(
+			s.userAuthMiddleware.Authenticate(http.HandlerFunc(s.handleConditionSets))))
+
+	mux.Handle("/v1/condition_sets/",
+		s.appAuthMiddleware.Authenticate(
+			s.userAuthMiddleware.Authenticate(
+				http.HandlerFunc(s.handleConditionSetOperations))))
+
 	s.httpServer = &http.Server{
 		Addr: fmt.Sprintf(":%d", s.config.Port),
 		// Chain middleware: AuditContext -> Logging -> Idempotency -> Routes

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	policyengine "github.com/better-wallet/better-wallet/internal/policy"
 	"github.com/better-wallet/better-wallet/internal/storage"
 	"github.com/better-wallet/better-wallet/pkg/auth"
 	apperrors "github.com/better-wallet/better-wallet/pkg/errors"
@@ -13,29 +14,62 @@ import (
 	"github.com/google/uuid"
 )
 
-// PolicyResponse represents a policy in API responses
+// PolicyConditionResponse represents a condition in Privy-compatible format
+type PolicyConditionResponse struct {
+	FieldSource string      `json:"field_source"`
+	Field       string      `json:"field"`
+	Operator    string      `json:"operator"`
+	Value       interface{} `json:"value"`
+}
+
+// PolicyRuleResponse represents a rule in Privy-compatible format
+type PolicyRuleResponse struct {
+	Name       string                    `json:"name"`
+	Method     string                    `json:"method"`
+	Conditions []PolicyConditionResponse `json:"conditions"`
+	Action     string                    `json:"action"`
+}
+
+// PolicyResponse represents a policy in API responses (Privy-compatible)
 type PolicyResponse struct {
 	ID        uuid.UUID              `json:"id"`
+	Version   string                 `json:"version"`
 	Name      string                 `json:"name"`
 	ChainType string                 `json:"chain_type"`
-	Version   string                 `json:"version"`
-	Rules     map[string]interface{} `json:"rules"`
+	Rules     map[string]interface{} `json:"rules"` // Stored as raw JSON for flexibility
 	OwnerID   uuid.UUID              `json:"owner_id"`
 	CreatedAt int64                  `json:"created_at"` // Unix timestamp in milliseconds
 }
 
-// CreatePolicyRequest represents the request to create a policy
+// PolicyConditionInput represents a condition in the create request
+type PolicyConditionInput struct {
+	FieldSource string      `json:"field_source"`
+	Field       string      `json:"field"`
+	Operator    string      `json:"operator"`
+	Value       interface{} `json:"value"`
+}
+
+// PolicyRuleInput represents a rule in the create request
+type PolicyRuleInput struct {
+	Name       string                 `json:"name"`
+	Method     string                 `json:"method"`
+	Conditions []PolicyConditionInput `json:"conditions"`
+	Action     string                 `json:"action"`
+}
+
+// CreatePolicyRequest represents the request to create a policy (Privy-compatible)
 type CreatePolicyRequest struct {
-	Name      string                 `json:"name"`
-	ChainType string                 `json:"chain_type"`
-	Rules     map[string]interface{} `json:"rules"`
-	OwnerID   *uuid.UUID             `json:"owner_id,omitempty"` // Authorization key ID that will own this policy
+	Version   string            `json:"version,omitempty"` // Defaults to "1.0"
+	Name      string            `json:"name"`
+	ChainType string            `json:"chain_type"`
+	Rules     []PolicyRuleInput `json:"rules"`
+	OwnerID   *uuid.UUID        `json:"owner_id,omitempty"` // Authorization key ID that owns this policy
 }
 
 // UpdatePolicyRequest represents the request to update a policy
 type UpdatePolicyRequest struct {
-	Name  *string                 `json:"name,omitempty"`
-	Rules *map[string]interface{} `json:"rules,omitempty"`
+	Name  *string            `json:"name,omitempty"`
+	Rules *[]PolicyRuleInput `json:"rules,omitempty"`
 }
 
 // ListPoliciesResponse for paginated policy listing
@@ -259,9 +293,8 @@ func (s *Server) handleCreatePolicy(w http.ResponseWriter, r *http.Request) {
 		req.ChainType = types.ChainTypeEthereum
 	}
 
-	if req.Rules == nil {
-		req.Rules = make(map[string]interface{})
-	}
+	// Convert rules to storage format
+	rules := convertRulesToStorage(req.Rules)
 
 	// Determine owner ID
 	var ownerID uuid.UUID
@@ -320,13 +353,30 @@ func (s *Server) handleCreatePolicy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create policy
+	version := req.Version
+	if version == "" {
+		version = types.PolicyVersion
+	}
+
 	policy := &types.Policy{
 		ID:        uuid.New(),
 		Name:      req.Name,
 		ChainType: req.ChainType,
-		Version:   "v1",
-		Rules:     req.Rules,
+		Version:   version,
+		Rules:     rules,
 		OwnerID:   ownerID,
+	}
+
+	// Validate policy schema strictly before storing
+	policyEngine := policyengine.NewEngine()
+	if err := policyEngine.ValidatePolicy(policy); err != nil {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeBadRequest,
+			"Invalid policy schema",
+			err.Error(),
+			http.StatusBadRequest,
+		))
+		return
 	}
 
 	policyRepo := storage.NewPolicyRepository(s.store)
@@ -407,7 +457,19 @@ func (s *Server) handleUpdatePolicy(w http.ResponseWriter, r *http.Request, poli
 		policy.Name = *req.Name
 	}
 	if req.Rules != nil {
-		policy.Rules = *req.Rules
+		policy.Rules = convertRulesToStorage(*req.Rules)
+	}
+
+	// Validate updated policy schema strictly before storing
+	policyEngine := policyengine.NewEngine()
+	if err := policyEngine.ValidatePolicy(policy); err != nil {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeBadRequest,
+			"Invalid policy schema",
+			err.Error(),
+			http.StatusBadRequest,
+		))
+		return
 	}
 
 	// Update in database
@@ -641,4 +703,89 @@ func (s *Server) verifySignatureAgainstAuthKey(r *http.Request, authKeyID uuid.U
 		"Authorization signature verification failed",
 		403,
 	)
+}
+
+// convertRulesToStorage converts PolicyRuleInput to storage format (map[string]interface{})
+func convertRulesToStorage(rules []PolicyRuleInput) map[string]interface{} {
+	if len(rules) == 0 {
+		return map[string]interface{}{"rules": []interface{}{}}
+	}
+
+	rulesList := make([]interface{}, len(rules))
+	for i, rule := range rules {
+		conditions := make([]interface{}, len(rule.Conditions))
+		for j, cond := range rule.Conditions {
+			conditions[j] = map[string]interface{}{
+				"field_source": cond.FieldSource,
+				"field":        cond.Field,
+				"operator":     cond.Operator,
+				"value":        cond.Value,
+			}
+		}
+
+		rulesList[i] = map[string]interface{}{
+			"name":       rule.Name,
+			"method":     rule.Method,
+			"conditions": conditions,
+			"action":     rule.Action,
+		}
+	}
+
+	return map[string]interface{}{
+		"rules": rulesList,
+	}
+}
+
+// convertStorageRulesToInput converts storage format back to PolicyRuleInput for updates
+func convertStorageRulesToInput(rules map[string]interface{}) []PolicyRuleInput {
+	rulesList, ok := rules["rules"].([]interface{})
+	if !ok {
+		return nil
+	}
+
+	result := make([]PolicyRuleInput, 0, len(rulesList))
+	for _, ruleInterface := range rulesList {
+		rule, ok := ruleInterface.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		ruleInput := PolicyRuleInput{}
+		if name, ok := rule["name"].(string); ok {
+			ruleInput.Name = name
+		}
+		if method, ok := rule["method"].(string); ok {
+			ruleInput.Method = method
+		}
+		if action, ok := rule["action"].(string); ok {
+			ruleInput.Action = action
+		}
+
+		if conditions, ok := rule["conditions"].([]interface{}); ok {
+			for _, condInterface := range conditions {
+				cond, ok := condInterface.(map[string]interface{})
+				if !ok {
+					continue
+				}
+
+				condInput := PolicyConditionInput{}
+				if fieldSource, ok := cond["field_source"].(string); ok {
+					condInput.FieldSource = fieldSource
+				}
+				if field, ok := cond["field"].(string); ok {
+					condInput.Field = field
+				}
+				if operator, ok := cond["operator"].(string); ok {
+					condInput.Operator = operator
+				}
+				condInput.Value = cond["value"]
+
+				ruleInput.Conditions = append(ruleInput.Conditions, condInput)
+			}
+		}
+
+		result = append(result, ruleInput)
+	}
+
+	return result
 }

@@ -182,6 +182,21 @@ CREATE TABLE idempotency_records (
 CREATE INDEX idx_idempotency_records_expires_at ON idempotency_records(expires_at);
 CREATE INDEX idx_idempotency_records_app_key_method_url ON idempotency_records(app_id, key, method, url) WHERE expires_at > NOW();
 
+-- Condition Sets for policy evaluation
+-- Used with the "in_condition_set" operator to reference reusable lists of values
+CREATE TABLE condition_sets (
+    id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name text NOT NULL,
+    description text,
+    values jsonb NOT NULL DEFAULT '[]',
+    owner_id uuid NOT NULL REFERENCES authorization_keys(id) ON DELETE RESTRICT,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_condition_sets_owner_id ON condition_sets(owner_id);
+CREATE INDEX idx_condition_sets_name ON condition_sets(name);
+
 -- Comments
 COMMENT ON TABLE authorization_keys IS 'Public keys for owner signature verification. Only P-256 is supported';
 COMMENT ON TABLE idempotency_records IS 'Stores idempotency records with cached responses. Records expire after 24 hours. Scoped by (app_id, key, method, url)';
