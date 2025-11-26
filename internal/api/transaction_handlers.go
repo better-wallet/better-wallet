@@ -7,23 +7,27 @@ import (
 
 	"github.com/better-wallet/better-wallet/internal/storage"
 	apperrors "github.com/better-wallet/better-wallet/pkg/errors"
-	"github.com/better-wallet/better-wallet/pkg/types"
+	"github.com/google/uuid"
 )
 
 // TransactionResponse represents a transaction in API responses
 type TransactionResponse struct {
-	ID            int64   `json:"id"`
-	Actor         string  `json:"actor"`
-	Action        string  `json:"action"`
-	ResourceType  string  `json:"resource_type"`
-	ResourceID    string  `json:"resource_id"`
-	PolicyResult  *string `json:"policy_result,omitempty"`
-	SignerID      *string `json:"signer_id,omitempty"`
-	TxHash        *string `json:"tx_hash,omitempty"`
-	RequestDigest *string `json:"request_digest,omitempty"`
-	ClientIP      *string `json:"client_ip,omitempty"`
-	UserAgent     *string `json:"user_agent,omitempty"`
-	CreatedAt     int64   `json:"created_at"` // Unix timestamp in milliseconds
+	ID                   string  `json:"id"`
+	WalletID             string  `json:"wallet_id"`
+	ChainID              int64   `json:"chain_id"`
+	TxHash               *string `json:"tx_hash,omitempty"`
+	Status               string  `json:"status"`
+	Method               string  `json:"method"`
+	ToAddress            *string `json:"to,omitempty"`
+	Value                *string `json:"value,omitempty"`
+	Data                 *string `json:"data,omitempty"`
+	Nonce                *int64  `json:"nonce,omitempty"`
+	GasLimit             *int64  `json:"gas_limit,omitempty"`
+	MaxFeePerGas         *string `json:"max_fee_per_gas,omitempty"`
+	MaxPriorityFeePerGas *string `json:"max_priority_fee_per_gas,omitempty"`
+	ErrorMessage         *string `json:"error_message,omitempty"`
+	CreatedAt            int64   `json:"created_at"`
+	UpdatedAt            int64   `json:"updated_at"`
 }
 
 // ListTransactionsResponse for paginated transaction listing
@@ -55,7 +59,7 @@ func (s *Server) handleTransactionOperations(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	txID, err := strconv.ParseInt(pathParts[0], 10, 64)
+	txID, err := uuid.Parse(pathParts[0])
 	if err != nil {
 		s.writeError(w, apperrors.NewWithDetail(
 			apperrors.ErrCodeBadRequest,
@@ -79,29 +83,16 @@ func (s *Server) handleTransactionOperations(w http.ResponseWriter, r *http.Requ
 }
 
 // handleGetTransaction retrieves a single transaction by ID
-func (s *Server) handleGetTransaction(w http.ResponseWriter, r *http.Request, txID int64) {
-	userSub, ok := getUserSub(r.Context())
+func (s *Server) handleGetTransaction(w http.ResponseWriter, r *http.Request, txID uuid.UUID) {
+	_, ok := getUserSub(r.Context())
 	if !ok {
 		s.writeError(w, apperrors.ErrUnauthorized)
 		return
 	}
 
-	// Get user to verify ownership
-	userRepo := storage.NewUserRepository(s.store)
-	user, err := userRepo.GetByExternalSub(r.Context(), userSub)
-	if err != nil || user == nil {
-		s.writeError(w, apperrors.NewWithDetail(
-			apperrors.ErrCodeInternalError,
-			"Failed to get user",
-			"",
-			http.StatusInternalServerError,
-		))
-		return
-	}
-
-	// Get audit log entry (transaction record)
-	auditRepo := storage.NewAuditRepository(s.store)
-	auditLog, err := auditRepo.GetByID(r.Context(), txID)
+	// Get transaction
+	txRepo := storage.NewTransactionRepository(s.store)
+	tx, err := txRepo.GetByID(r.Context(), txID)
 	if err != nil {
 		s.writeError(w, apperrors.NewWithDetail(
 			apperrors.ErrCodeInternalError,
@@ -111,54 +102,30 @@ func (s *Server) handleGetTransaction(w http.ResponseWriter, r *http.Request, tx
 		))
 		return
 	}
-	if auditLog == nil {
-		s.writeError(w, apperrors.NewWithDetail(
-			apperrors.ErrCodeNotFound,
-			"Transaction not found",
-			"",
-			http.StatusNotFound,
-		))
+
+	if tx == nil {
+		s.writeError(w, apperrors.ErrNotFound)
 		return
 	}
 
-	// Verify the transaction belongs to this user
-	// Actor should match the user's external_sub
-	if auditLog.Actor != userSub {
-		s.writeError(w, apperrors.ErrForbidden)
-		return
-	}
+	// TODO: Verify user has access to this transaction's wallet
 
-	response := convertAuditLogToTransactionResponse(auditLog)
+	response := convertTransactionToResponse(tx)
 	s.writeJSON(w, http.StatusOK, response)
 }
 
 // handleListTransactions lists transactions with filtering
 func (s *Server) handleListTransactions(w http.ResponseWriter, r *http.Request) {
-	userSub, ok := getUserSub(r.Context())
+	_, ok := getUserSub(r.Context())
 	if !ok {
 		s.writeError(w, apperrors.ErrUnauthorized)
 		return
 	}
 
-	// Get user to verify ownership
-	userRepo := storage.NewUserRepository(s.store)
-	user, err := userRepo.GetByExternalSub(r.Context(), userSub)
-	if err != nil || user == nil {
-		s.writeError(w, apperrors.NewWithDetail(
-			apperrors.ErrCodeInternalError,
-			"Failed to get user",
-			"",
-			http.StatusInternalServerError,
-		))
-		return
-	}
-
 	// Parse query parameters
 	query := r.URL.Query()
-	walletID := query.Get("wallet_id")
-	action := query.Get("action")
+	walletIDStr := query.Get("wallet_id")
 	limitStr := query.Get("limit")
-	cursorStr := query.Get("cursor")
 
 	limit := 100
 	if limitStr != "" {
@@ -167,46 +134,29 @@ func (s *Server) handleListTransactions(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	var cursor int64
-	if cursorStr != "" {
-		if parsedCursor, err := strconv.ParseInt(cursorStr, 10, 64); err == nil {
-			cursor = parsedCursor
+	txRepo := storage.NewTransactionRepository(s.store)
+
+	var transactions []*storage.Transaction
+	var err error
+
+	if walletIDStr != "" {
+		walletID, parseErr := uuid.Parse(walletIDStr)
+		if parseErr != nil {
+			s.writeError(w, apperrors.NewWithDetail(
+				apperrors.ErrCodeBadRequest,
+				"Invalid wallet_id",
+				parseErr.Error(),
+				http.StatusBadRequest,
+			))
+			return
 		}
+		transactions, err = txRepo.ListByWalletID(r.Context(), walletID, limit)
+	} else {
+		// For now, return empty list if no wallet_id specified
+		// TODO: List all transactions for user's wallets
+		transactions = []*storage.Transaction{}
 	}
 
-	// Build query to get audit logs (transactions) for this user
-	sqlQuery := `
-		SELECT id, actor, action, resource_type, resource_id,
-		       policy_result, signer_id, tx_hash, request_digest,
-		       client_ip, user_agent, created_at
-		FROM audit_logs
-		WHERE actor = $1
-	`
-	args := []interface{}{userSub}
-	argIndex := 2
-
-	if walletID != "" {
-		sqlQuery += ` AND resource_id = $` + strconv.Itoa(argIndex)
-		args = append(args, walletID)
-		argIndex++
-	}
-
-	if action != "" {
-		sqlQuery += ` AND action = $` + strconv.Itoa(argIndex)
-		args = append(args, action)
-		argIndex++
-	}
-
-	if cursor > 0 {
-		sqlQuery += ` AND id < $` + strconv.Itoa(argIndex)
-		args = append(args, cursor)
-		argIndex++
-	}
-
-	sqlQuery += ` ORDER BY id DESC LIMIT $` + strconv.Itoa(argIndex)
-	args = append(args, limit+1) // Fetch one extra to determine if there are more results
-
-	rows, err := s.store.DB().Query(r.Context(), sqlQuery, args...)
 	if err != nil {
 		s.writeError(w, apperrors.NewWithDetail(
 			apperrors.ErrCodeInternalError,
@@ -216,65 +166,38 @@ func (s *Server) handleListTransactions(w http.ResponseWriter, r *http.Request) 
 		))
 		return
 	}
-	defer rows.Close()
 
-	var transactions []TransactionResponse
-	for rows.Next() {
-		var log types.AuditLog
-
-		err := rows.Scan(
-			&log.ID,
-			&log.Actor,
-			&log.Action,
-			&log.ResourceType,
-			&log.ResourceID,
-			&log.PolicyResult,
-			&log.SignerID,
-			&log.TxHash,
-			&log.RequestDigest,
-			&log.ClientIP,
-			&log.UserAgent,
-			&log.CreatedAt,
-		)
-		if err != nil {
-			continue
-		}
-
-		transactions = append(transactions, convertAuditLogToTransactionResponse(&log))
-	}
-
-	// Prepare response with pagination
-	var nextCursor *string
-	if len(transactions) > limit {
-		// Remove the extra item
-		transactions = transactions[:limit]
-		// Set next cursor to the ID of the last item
-		lastID := strconv.FormatInt(transactions[len(transactions)-1].ID, 10)
-		nextCursor = &lastID
+	// Convert to response format
+	data := make([]TransactionResponse, len(transactions))
+	for i, tx := range transactions {
+		data[i] = convertTransactionToResponse(tx)
 	}
 
 	response := ListTransactionsResponse{
-		Data:       transactions,
-		NextCursor: nextCursor,
+		Data: data,
 	}
 
 	s.writeJSON(w, http.StatusOK, response)
 }
 
-// convertAuditLogToTransactionResponse converts an audit log to transaction response format
-func convertAuditLogToTransactionResponse(log *types.AuditLog) TransactionResponse {
+// convertTransactionToResponse converts a storage Transaction to API response
+func convertTransactionToResponse(tx *storage.Transaction) TransactionResponse {
 	return TransactionResponse{
-		ID:            log.ID,
-		Actor:         log.Actor,
-		Action:        log.Action,
-		ResourceType:  log.ResourceType,
-		ResourceID:    log.ResourceID,
-		PolicyResult:  log.PolicyResult,
-		SignerID:      log.SignerID,
-		TxHash:        log.TxHash,
-		RequestDigest: log.RequestDigest,
-		ClientIP:      log.ClientIP,
-		UserAgent:     log.UserAgent,
-		CreatedAt:     log.CreatedAt.UnixMilli(),
+		ID:                   tx.ID.String(),
+		WalletID:             tx.WalletID.String(),
+		ChainID:              tx.ChainID,
+		TxHash:               tx.TxHash,
+		Status:               tx.Status,
+		Method:               tx.Method,
+		ToAddress:            tx.ToAddress,
+		Value:                tx.Value,
+		Data:                 tx.Data,
+		Nonce:                tx.Nonce,
+		GasLimit:             tx.GasLimit,
+		MaxFeePerGas:         tx.MaxFeePerGas,
+		MaxPriorityFeePerGas: tx.MaxPriorityFeePerGas,
+		ErrorMessage:         tx.ErrorMessage,
+		CreatedAt:            tx.CreatedAt.UnixMilli(),
+		UpdatedAt:            tx.UpdatedAt.UnixMilli(),
 	}
 }

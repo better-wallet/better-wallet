@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/better-wallet/better-wallet/internal/app"
+	"github.com/better-wallet/better-wallet/internal/storage"
 	"github.com/better-wallet/better-wallet/pkg/auth"
 	apperrors "github.com/better-wallet/better-wallet/pkg/errors"
 	"github.com/google/uuid"
@@ -293,12 +294,58 @@ func (s *Server) handleEthSendTransaction(
 	// TODO: If sponsor=true, submit transaction to network
 	// For now, just return the signed transaction
 
+	// Encode signed transaction
+	txBytes, err := signedTx.MarshalBinary()
+	if err != nil {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeInternalError,
+			"Failed to encode transaction",
+			err.Error(),
+			http.StatusInternalServerError,
+		))
+		return
+	}
+
+	// Create transaction record
+	txID := uuid.New()
+	txRepo := storage.NewTransactionRepository(s.store)
+	toAddr := p.Transaction.To
+	valueStr := p.Transaction.Value
+	dataStr := p.Transaction.Data
+	nonceVal := int64(nonce)
+	gasLimitVal := int64(gasLimit)
+	maxFeeStr := gasFeeCap.String()
+	maxPriorityStr := gasTipCap.String()
+	txHash := signedTx.Hash().Hex()
+
+	txRecord := &storage.Transaction{
+		ID:                   txID,
+		WalletID:             walletID,
+		ChainID:              p.Transaction.ChainID,
+		TxHash:               &txHash,
+		Status:               "submitted", // For now, mark as submitted since we signed it
+		Method:               "eth_sendTransaction",
+		ToAddress:            &toAddr,
+		Value:                &valueStr,
+		Data:                 &dataStr,
+		Nonce:                &nonceVal,
+		GasLimit:             &gasLimitVal,
+		MaxFeePerGas:         &maxFeeStr,
+		MaxPriorityFeePerGas: &maxPriorityStr,
+		SignedTx:             txBytes,
+	}
+
+	if err := txRepo.Create(r.Context(), txRecord); err != nil {
+		// Log error but don't fail the request
+		// TODO: Add logging
+	}
+
 	response := RPCResponse{
 		Method: "eth_sendTransaction",
 		Data: map[string]interface{}{
-			"hash":           signedTx.Hash().Hex(),
+			"hash":           txHash,
 			"caip2":          fmt.Sprintf("eip155:%d", p.Transaction.ChainID),
-			"transaction_id": uuid.New().String(), // TODO: Generate proper transaction ID
+			"transaction_id": txID.String(),
 		},
 	}
 

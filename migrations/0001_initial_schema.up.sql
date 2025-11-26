@@ -134,6 +134,33 @@ CREATE TABLE recovery_info (
     updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+-- Transactions table for tracking RPC transaction requests
+-- Stores transaction_id returned from eth_sendTransaction for later status queries
+CREATE TABLE transactions (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    wallet_id uuid NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,
+    chain_id bigint NOT NULL,
+    tx_hash text,
+    status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'submitted', 'confirmed', 'failed')),
+    method text NOT NULL,  -- eth_sendTransaction, eth_signTransaction, etc.
+    to_address text,
+    value text,
+    data text,
+    nonce bigint,
+    gas_limit bigint,
+    max_fee_per_gas text,
+    max_priority_fee_per_gas text,
+    signed_tx bytea,
+    error_message text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_transactions_wallet_id ON transactions(wallet_id);
+CREATE INDEX idx_transactions_tx_hash ON transactions(tx_hash) WHERE tx_hash IS NOT NULL;
+CREATE INDEX idx_transactions_status ON transactions(status);
+CREATE INDEX idx_transactions_created_at ON transactions(created_at DESC);
+
 -- Idempotency records table for response caching
 -- Store first response for 24 hours to prevent duplicate operations
 -- Scoped by app_id, key, method, and URL to allow same key for different endpoints

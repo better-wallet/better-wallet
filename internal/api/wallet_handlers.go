@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/better-wallet/better-wallet/internal/app"
+	"github.com/better-wallet/better-wallet/internal/storage"
 	"github.com/better-wallet/better-wallet/pkg/auth"
 	apperrors "github.com/better-wallet/better-wallet/pkg/errors"
 	"github.com/better-wallet/better-wallet/pkg/types"
@@ -103,13 +105,20 @@ func (s *Server) handleWallets(w http.ResponseWriter, r *http.Request) {
 
 // handleWalletOperationsRouter routes wallet operations to appropriate handlers
 func (s *Server) handleWalletOperationsRouter(w http.ResponseWriter, r *http.Request) {
-	// Extract wallet ID from path: /v1/wallets/{id}/...
+	// Extract path from /v1/wallets/...
 	pathParts := strings.Split(strings.TrimPrefix(r.URL.Path, "/v1/wallets/"), "/")
 	if len(pathParts) < 1 || pathParts[0] == "" {
 		s.writeError(w, apperrors.ErrNotFound)
 		return
 	}
 
+	// Handle global /v1/wallets/authenticate endpoint
+	if pathParts[0] == "authenticate" && r.Method == http.MethodPost {
+		s.handleWalletsAuthenticate(w, r)
+		return
+	}
+
+	// Otherwise, expect a wallet ID
 	walletID, err := uuid.Parse(pathParts[0])
 	if err != nil {
 		s.writeError(w, apperrors.NewWithDetail(
@@ -775,8 +784,8 @@ func convertAdditionalSigners(signers *[]AdditionalSigner) *[]app.AdditionalSign
 
 // ExportWalletRequest represents the request to export a wallet with HPKE encryption
 type ExportWalletRequest struct {
-	EncryptionType      string `json:"encryption_type"`       // Must be "HPKE"
-	RecipientPublicKey  string `json:"recipient_public_key"`  // Base64-encoded P-256 public key
+	EncryptionType     string `json:"encryption_type"`      // Must be "HPKE"
+	RecipientPublicKey string `json:"recipient_public_key"` // Base64-encoded P-256 public key
 }
 
 // ExportWalletResponse represents the encrypted wallet export response
@@ -939,6 +948,125 @@ func (s *Server) handleExportWallet(w http.ResponseWriter, r *http.Request, wall
 		Ciphertext:      encrypted.Ciphertext,
 		EncapsulatedKey: encrypted.EncapsulatedKey,
 		ExportedAt:      now.UnixMilli(),
+	}
+
+	s.writeJSON(w, http.StatusOK, response)
+}
+
+// AuthenticateRequest represents the request to obtain a session key
+type AuthenticateRequest struct {
+	UserJWT            string `json:"user_jwt,omitempty"`
+	EncryptionType     string `json:"encryption_type,omitempty"`
+	RecipientPublicKey string `json:"recipient_public_key,omitempty"`
+}
+
+// AuthenticateResponse represents the response with encrypted authorization key
+type AuthenticateResponse struct {
+	EncryptedAuthorizationKey *EncryptedAuthKey `json:"encrypted_authorization_key,omitempty"`
+	AuthorizationKey          string            `json:"authorization_key,omitempty"` // Only returned if no encryption
+	ExpiresAt                 int64             `json:"expires_at"`
+}
+
+// EncryptedAuthKey represents an HPKE-encrypted authorization key
+type EncryptedAuthKey struct {
+	EncryptionType  string `json:"encryption_type"`
+	EncapsulatedKey string `json:"encapsulated_key"`
+	Ciphertext      string `json:"ciphertext"`
+}
+
+// handleWalletsAuthenticate obtains a session key for wallet access
+// POST /v1/wallets/authenticate
+func (s *Server) handleWalletsAuthenticate(w http.ResponseWriter, r *http.Request) {
+	userSub, ok := getUserSub(r.Context())
+	if !ok {
+		s.writeError(w, apperrors.ErrUnauthorized)
+		return
+	}
+
+	// Parse request
+	var req AuthenticateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeBadRequest,
+			"Invalid request body",
+			err.Error(),
+			http.StatusBadRequest,
+		))
+		return
+	}
+
+	// Generate ephemeral P256 key pair for signing
+	ephemeralPrivKey, ephemeralPubKey, err := auth.GenerateP256KeyPair()
+	if err != nil {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeInternalError,
+			"Failed to generate ephemeral key",
+			err.Error(),
+			http.StatusInternalServerError,
+		))
+		return
+	}
+
+	// Set expiration (default 1 hour)
+	expiresAt := time.Now().Add(1 * time.Hour).UnixMilli()
+
+	// Store the ephemeral key in database for later verification
+	authKeyRepo := storage.NewAuthorizationKeyRepository(s.store)
+	ephemeralAuthKey := &types.AuthorizationKey{
+		ID:          uuid.New(),
+		PublicKey:   ephemeralPubKey,
+		Algorithm:   types.AlgorithmP256,
+		Status:      types.StatusActive,
+		OwnerEntity: userSub,
+		CreatedAt:   time.Now(),
+	}
+	if err := authKeyRepo.Create(r.Context(), ephemeralAuthKey); err != nil {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeInternalError,
+			"Failed to store ephemeral key",
+			err.Error(),
+			http.StatusInternalServerError,
+		))
+		return
+	}
+
+	var response AuthenticateResponse
+	response.ExpiresAt = expiresAt
+
+	// If encryption requested, encrypt the private key with HPKE
+	if req.EncryptionType == "HPKE" && req.RecipientPublicKey != "" {
+		// Decode recipient public key (base64)
+		recipientPubKeyBytes, err := base64.StdEncoding.DecodeString(req.RecipientPublicKey)
+		if err != nil {
+			s.writeError(w, apperrors.NewWithDetail(
+				apperrors.ErrCodeBadRequest,
+				"Invalid recipient public key",
+				err.Error(),
+				http.StatusBadRequest,
+			))
+			return
+		}
+
+		// Encrypt ephemeral private key using HPKE
+		encapsulatedKey, ciphertext, err := auth.EncryptWithHPKE(ephemeralPrivKey, recipientPubKeyBytes)
+		if err != nil {
+			s.writeError(w, apperrors.NewWithDetail(
+				apperrors.ErrCodeInternalError,
+				"Failed to encrypt authorization key",
+				err.Error(),
+				http.StatusInternalServerError,
+			))
+			return
+		}
+
+		response.EncryptedAuthorizationKey = &EncryptedAuthKey{
+			EncryptionType:  "HPKE",
+			EncapsulatedKey: base64.StdEncoding.EncodeToString(encapsulatedKey),
+			Ciphertext:      base64.StdEncoding.EncodeToString(ciphertext),
+		}
+	} else {
+		// Return unencrypted (for testing/development only)
+		response.AuthorizationKey = hex.EncodeToString(ephemeralPrivKey)
 	}
 
 	s.writeJSON(w, http.StatusOK, response)
