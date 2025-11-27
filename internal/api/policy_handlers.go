@@ -14,7 +14,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// PolicyConditionResponse represents a condition in Privy-compatible format
+// PolicyConditionResponse represents a condition in API response format
 type PolicyConditionResponse struct {
 	FieldSource string      `json:"field_source"`
 	Field       string      `json:"field"`
@@ -22,7 +22,7 @@ type PolicyConditionResponse struct {
 	Value       interface{} `json:"value"`
 }
 
-// PolicyRuleResponse represents a rule in Privy-compatible format
+// PolicyRuleResponse represents a rule in API response format
 type PolicyRuleResponse struct {
 	Name       string                    `json:"name"`
 	Method     string                    `json:"method"`
@@ -30,7 +30,7 @@ type PolicyRuleResponse struct {
 	Action     string                    `json:"action"`
 }
 
-// PolicyResponse represents a policy in API responses (Privy-compatible)
+// PolicyResponse represents a policy in API responses
 type PolicyResponse struct {
 	ID        uuid.UUID              `json:"id"`
 	Version   string                 `json:"version"`
@@ -57,7 +57,7 @@ type PolicyRuleInput struct {
 	Action     string                 `json:"action"`
 }
 
-// CreatePolicyRequest represents the request to create a policy (Privy-compatible)
+// CreatePolicyRequest represents the request to create a policy
 type CreatePolicyRequest struct {
 	Version   string            `json:"version,omitempty"` // Defaults to "1.0"
 	Name      string            `json:"name"`

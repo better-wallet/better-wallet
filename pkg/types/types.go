@@ -95,7 +95,6 @@ type AuditLog struct {
 	SignerID      *string   `json:"signer_id,omitempty"`
 	TxHash        *string   `json:"tx_hash,omitempty"`
 	RequestDigest *string   `json:"request_digest,omitempty"`
-	RequestNonce  *string   `json:"request_nonce,omitempty"`
 	ClientIP      *string   `json:"client_ip,omitempty"`
 	UserAgent     *string   `json:"user_agent,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`

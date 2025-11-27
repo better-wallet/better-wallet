@@ -56,7 +56,7 @@ const (
 )
 
 // PolicyCondition represents a single condition in a policy rule
-// Matches Privy's field_source/operator schema
+// Uses field_source/operator schema
 type PolicyCondition struct {
 	// FieldSource specifies where to get the field value from
 	FieldSource FieldSource `json:"field_source"`
@@ -81,7 +81,7 @@ type PolicyRule struct {
 	Action RuleAction `json:"action"`
 }
 
-// PolicySchema represents the top-level policy structure matching Privy's format
+// PolicySchema represents the top-level policy structure
 type PolicySchema struct {
 	// Version is the policy schema version (always "1.0")
 	Version string `json:"version"`

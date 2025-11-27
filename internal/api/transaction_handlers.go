@@ -1,10 +1,12 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"github.com/better-wallet/better-wallet/internal/app"
 	"github.com/better-wallet/better-wallet/internal/storage"
 	apperrors "github.com/better-wallet/better-wallet/pkg/errors"
 	"github.com/google/uuid"
@@ -13,9 +15,10 @@ import (
 // TransactionResponse represents a transaction in API responses
 type TransactionResponse struct {
 	ID                   string  `json:"id"`
+	Hash                 *string `json:"hash,omitempty"`           // Transaction hash
+	CAIP2                *string `json:"caip2,omitempty"`          // CAIP-2 chain identifier (e.g., "eip155:1")
 	WalletID             string  `json:"wallet_id"`
 	ChainID              int64   `json:"chain_id"`
-	TxHash               *string `json:"tx_hash,omitempty"`
 	Status               string  `json:"status"`
 	Method               string  `json:"method"`
 	ToAddress            *string `json:"to,omitempty"`
@@ -84,7 +87,7 @@ func (s *Server) handleTransactionOperations(w http.ResponseWriter, r *http.Requ
 
 // handleGetTransaction retrieves a single transaction by ID
 func (s *Server) handleGetTransaction(w http.ResponseWriter, r *http.Request, txID uuid.UUID) {
-	_, ok := getUserSub(r.Context())
+	userSub, ok := getUserSub(r.Context())
 	if !ok {
 		s.writeError(w, apperrors.ErrUnauthorized)
 		return
@@ -108,7 +111,12 @@ func (s *Server) handleGetTransaction(w http.ResponseWriter, r *http.Request, tx
 		return
 	}
 
-	// TODO: Verify user has access to this transaction's wallet
+	// Verify user has access to this transaction's wallet
+	wallet, err := s.walletService.GetWallet(r.Context(), tx.WalletID, userSub)
+	if err != nil || wallet == nil {
+		s.writeError(w, apperrors.ErrForbidden)
+		return
+	}
 
 	response := convertTransactionToResponse(tx)
 	s.writeJSON(w, http.StatusOK, response)
@@ -116,7 +124,7 @@ func (s *Server) handleGetTransaction(w http.ResponseWriter, r *http.Request, tx
 
 // handleListTransactions lists transactions with filtering
 func (s *Server) handleListTransactions(w http.ResponseWriter, r *http.Request) {
-	_, ok := getUserSub(r.Context())
+	userSub, ok := getUserSub(r.Context())
 	if !ok {
 		s.writeError(w, apperrors.ErrUnauthorized)
 		return
@@ -140,6 +148,7 @@ func (s *Server) handleListTransactions(w http.ResponseWriter, r *http.Request) 
 	var err error
 
 	if walletIDStr != "" {
+		// Filter by specific wallet
 		walletID, parseErr := uuid.Parse(walletIDStr)
 		if parseErr != nil {
 			s.writeError(w, apperrors.NewWithDetail(
@@ -150,11 +159,43 @@ func (s *Server) handleListTransactions(w http.ResponseWriter, r *http.Request) 
 			))
 			return
 		}
+
+		// Verify user owns the wallet
+		wallet, err := s.walletService.GetWallet(r.Context(), walletID, userSub)
+		if err != nil || wallet == nil {
+			s.writeError(w, apperrors.ErrForbidden)
+			return
+		}
+
 		transactions, err = txRepo.ListByWalletID(r.Context(), walletID, limit)
 	} else {
-		// For now, return empty list if no wallet_id specified
-		// TODO: List all transactions for user's wallets
-		transactions = []*storage.Transaction{}
+		// List all transactions for user's wallets
+		wallets, _, err := s.walletService.ListWallets(r.Context(), &app.ListWalletsRequest{
+			UserSub: userSub,
+			Limit:   1000, // Get all wallets for the user
+		})
+		if err != nil {
+			s.writeError(w, apperrors.NewWithDetail(
+				apperrors.ErrCodeInternalError,
+				"Failed to get user wallets",
+				err.Error(),
+				http.StatusInternalServerError,
+			))
+			return
+		}
+
+		// Collect wallet IDs
+		walletIDs := make([]uuid.UUID, len(wallets))
+		for i, w := range wallets {
+			walletIDs[i] = w.ID
+		}
+
+		// Get transactions for all user wallets
+		if len(walletIDs) > 0 {
+			transactions, err = txRepo.ListByWalletIDs(r.Context(), walletIDs, limit)
+		} else {
+			transactions = []*storage.Transaction{}
+		}
 	}
 
 	if err != nil {
@@ -182,11 +223,19 @@ func (s *Server) handleListTransactions(w http.ResponseWriter, r *http.Request) 
 
 // convertTransactionToResponse converts a storage Transaction to API response
 func convertTransactionToResponse(tx *storage.Transaction) TransactionResponse {
+	// Build CAIP-2 chain identifier (e.g., "eip155:1" for Ethereum mainnet)
+	var caip2 *string
+	if tx.ChainID > 0 {
+		caip2Str := fmt.Sprintf("eip155:%d", tx.ChainID)
+		caip2 = &caip2Str
+	}
+
 	return TransactionResponse{
 		ID:                   tx.ID.String(),
+		Hash:                 tx.TxHash,
+		CAIP2:                caip2,
 		WalletID:             tx.WalletID.String(),
 		ChainID:              tx.ChainID,
-		TxHash:               tx.TxHash,
 		Status:               tx.Status,
 		Method:               tx.Method,
 		ToAddress:            tx.ToAddress,

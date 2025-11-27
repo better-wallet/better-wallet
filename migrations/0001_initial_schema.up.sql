@@ -104,7 +104,6 @@ CREATE INDEX idx_session_signers_signer_id ON session_signers(signer_id);
 CREATE INDEX idx_session_signers_ttl_expires_at ON session_signers(ttl_expires_at);
 
 -- Audit logs table
--- request_nonce is deprecated (v0.7.0+) but kept for historical audit data
 CREATE TABLE audit_logs (
     id bigserial PRIMARY KEY,
     actor text NOT NULL,
@@ -115,7 +114,6 @@ CREATE TABLE audit_logs (
     signer_id text,
     tx_hash text,
     request_digest text,
-    request_nonce text,  -- Deprecated: kept for backward compatibility
     client_ip inet,
     user_agent text,
     created_at timestamptz NOT NULL DEFAULT now()
@@ -202,4 +200,3 @@ COMMENT ON TABLE authorization_keys IS 'Public keys for owner signature verifica
 COMMENT ON TABLE idempotency_records IS 'Stores idempotency records with cached responses. Records expire after 24 hours. Scoped by (app_id, key, method, url)';
 COMMENT ON COLUMN idempotency_records.key IS 'The idempotency key from x-idempotency-key header (max 256 chars, recommended UUIDv4)';
 COMMENT ON COLUMN idempotency_records.body_hash IS 'SHA-256 hash of the request body to detect reused keys with different bodies';
-COMMENT ON COLUMN audit_logs.request_nonce IS 'Deprecated in v0.7.0 - replaced with idempotency records';

@@ -97,7 +97,7 @@ func (e *Engine) Evaluate(ctx context.Context, policies []*types.Policy, evalCtx
 			continue
 		}
 
-		// Parse policy rules using strict schema (no legacy fallback)
+		// Parse policy rules using strict schema
 		schema, err := e.parsePolicySchema(policy)
 		if err != nil {
 			// Invalid schema - deny with error
@@ -122,11 +122,9 @@ func (e *Engine) Evaluate(ctx context.Context, policies []*types.Policy, evalCtx
 	}, nil
 }
 
-// parsePolicySchema parses policy rules into the new schema format
+// parsePolicySchema parses policy rules into schema format
 func (e *Engine) parsePolicySchema(policy *types.Policy) (*types.PolicySchema, error) {
-	// Check for new-style schema
 	if rules, ok := policy.Rules["rules"].([]interface{}); ok {
-		// Try to parse as new schema first
 		schema := &types.PolicySchema{
 			Version:   types.PolicyVersion,
 			Name:      policy.Name,
@@ -139,11 +137,11 @@ func (e *Engine) parsePolicySchema(policy *types.Policy) (*types.PolicySchema, e
 				continue
 			}
 
-			// Check if this is a new-style rule (has conditions with field_source)
+			// Check if rule has valid field_source in conditions
 			if conditions, ok := ruleMap["conditions"].([]interface{}); ok && len(conditions) > 0 {
 				if firstCond, ok := conditions[0].(map[string]interface{}); ok {
 					if _, hasFieldSource := firstCond["field_source"]; hasFieldSource {
-						rule, err := e.parseNewStyleRule(ruleMap)
+						rule, err := e.parseRule(ruleMap)
 						if err != nil {
 							continue
 						}
@@ -153,8 +151,8 @@ func (e *Engine) parsePolicySchema(policy *types.Policy) (*types.PolicySchema, e
 				}
 			}
 
-			// Not a new-style rule
-			return nil, fmt.Errorf("legacy rule format detected")
+			// Invalid rule format
+			return nil, fmt.Errorf("invalid rule format: missing field_source in conditions")
 		}
 
 		if len(schema.Rules) > 0 {
@@ -162,11 +160,11 @@ func (e *Engine) parsePolicySchema(policy *types.Policy) (*types.PolicySchema, e
 		}
 	}
 
-	return nil, fmt.Errorf("no valid new-style rules found")
+	return nil, fmt.Errorf("no valid rules found")
 }
 
-// parseNewStyleRule parses a rule in Privy-compatible format
-func (e *Engine) parseNewStyleRule(ruleMap map[string]interface{}) (*types.PolicyRule, error) {
+// parseRule parses a rule in field_source/operator format
+func (e *Engine) parseRule(ruleMap map[string]interface{}) (*types.PolicyRule, error) {
 	rule := &types.PolicyRule{}
 
 	if name, ok := ruleMap["name"].(string); ok {
@@ -213,7 +211,7 @@ func (e *Engine) parseNewStyleRule(ruleMap map[string]interface{}) (*types.Polic
 	return rule, nil
 }
 
-// evaluatePolicySchema evaluates using the new Privy-compatible schema
+// evaluatePolicySchema evaluates using the field_source/operator schema
 func (e *Engine) evaluatePolicySchema(schema *types.PolicySchema, evalCtx *EvaluationContext, policy *types.Policy) *EvaluationResult {
 	// Rules are evaluated in order - first matching rule determines outcome
 	for i := range schema.Rules {

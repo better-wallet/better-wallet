@@ -962,9 +962,17 @@ type AuthenticateRequest struct {
 
 // AuthenticateResponse represents the response with encrypted authorization key
 type AuthenticateResponse struct {
-	EncryptedAuthorizationKey *EncryptedAuthKey `json:"encrypted_authorization_key,omitempty"`
-	AuthorizationKey          string            `json:"authorization_key,omitempty"` // Only returned if no encryption
-	ExpiresAt                 int64             `json:"expires_at"`
+	EncryptedAuthorizationKey *EncryptedAuthKey       `json:"encrypted_authorization_key,omitempty"`
+	AuthorizationKey          string                  `json:"authorization_key,omitempty"` // Only returned if no encryption
+	ExpiresAt                 int64                   `json:"expires_at"`
+	Wallets                   []AuthenticateWalletRef `json:"wallets,omitempty"` // Wallets accessible with this session
+}
+
+// AuthenticateWalletRef represents a wallet reference in authenticate response
+type AuthenticateWalletRef struct {
+	ID        string `json:"id"`
+	Address   string `json:"address"`
+	ChainType string `json:"chain_type"`
 }
 
 // EncryptedAuthKey represents an HPKE-encrypted authorization key
@@ -993,6 +1001,34 @@ func (s *Server) handleWalletsAuthenticate(w http.ResponseWriter, r *http.Reques
 			http.StatusBadRequest,
 		))
 		return
+	}
+
+	// Validate user_jwt if provided
+	// The user_jwt allows clients to provide an identity assertion in the request body
+	// This is validated to ensure the caller has valid authentication
+	if req.UserJWT != "" {
+		// Validate the JWT using the user auth middleware's validator
+		jwtUserSub, err := s.userAuthMiddleware.ValidateJWT(req.UserJWT)
+		if err != nil {
+			s.writeError(w, apperrors.NewWithDetail(
+				apperrors.ErrCodeUnauthorized,
+				"Invalid user_jwt",
+				err.Error(),
+				http.StatusUnauthorized,
+			))
+			return
+		}
+
+		// Verify the JWT subject matches the authenticated user
+		if jwtUserSub != userSub {
+			s.writeError(w, apperrors.NewWithDetail(
+				apperrors.ErrCodeForbidden,
+				"user_jwt does not match authenticated user",
+				"",
+				http.StatusForbidden,
+			))
+			return
+		}
 	}
 
 	// Generate ephemeral P256 key pair for signing
@@ -1030,8 +1066,29 @@ func (s *Server) handleWalletsAuthenticate(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Fetch user's wallets to include in response
+	wallets, _, err := s.walletService.ListWallets(r.Context(), &app.ListWalletsRequest{
+		UserSub: userSub,
+		Limit:   100, // Include up to 100 wallets
+	})
+	if err != nil {
+		// Log error but don't fail - wallets are optional in response
+		wallets = []*types.Wallet{}
+	}
+
+	// Build wallet references for response
+	walletRefs := make([]AuthenticateWalletRef, len(wallets))
+	for i, w := range wallets {
+		walletRefs[i] = AuthenticateWalletRef{
+			ID:        w.ID.String(),
+			Address:   w.Address,
+			ChainType: w.ChainType,
+		}
+	}
+
 	var response AuthenticateResponse
 	response.ExpiresAt = expiresAt
+	response.Wallets = walletRefs
 
 	// If encryption requested, encrypt the private key with HPKE
 	if req.EncryptionType == "HPKE" && req.RecipientPublicKey != "" {

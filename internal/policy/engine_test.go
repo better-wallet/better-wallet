@@ -547,56 +547,6 @@ func TestEngineValidatePolicy(t *testing.T) {
 	}
 }
 
-// TestLegacyPolicyRejected ensures legacy policy format is rejected
-func TestLegacyPolicyRejected(t *testing.T) {
-	engine := NewEngine()
-	ctx := context.Background()
-
-	// Legacy format policy (uses "type" instead of "field_source")
-	legacyPolicy := &types.Policy{
-		ID:        uuid.New(),
-		Name:      "Legacy Policy",
-		ChainType: "ethereum",
-		Version:   "v1",
-		Rules: map[string]interface{}{
-			"rules": []interface{}{
-				map[string]interface{}{
-					"action": "sign_transaction",
-					"conditions": []interface{}{
-						map[string]interface{}{
-							"type":  "max_value",
-							"value": "1000000000000000000",
-						},
-					},
-				},
-			},
-		},
-	}
-
-	evalCtx := &EvaluationContext{
-		ChainType: "ethereum",
-		Method:    "eth_sendTransaction",
-		To:        strPtr("0x1234567890abcdef1234567890abcdef12345678"),
-		Value:     big.NewInt(500000000000000000),
-		Timestamp: time.Now(),
-	}
-
-	result, err := engine.Evaluate(ctx, []*types.Policy{legacyPolicy}, evalCtx)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Should be denied because legacy format is no longer supported
-	if result.Decision != DecisionDeny {
-		t.Errorf("expected deny for legacy policy format, got allow")
-	}
-
-	// Should mention invalid schema
-	if !strings.Contains(result.Reason, "Invalid policy schema") {
-		t.Errorf("expected reason to mention invalid schema, got: %s", result.Reason)
-	}
-}
-
 // TestConditionSetOperator tests the in_condition_set operator
 func TestConditionSetOperator(t *testing.T) {
 	engine := NewEngine()

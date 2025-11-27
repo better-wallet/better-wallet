@@ -356,3 +356,38 @@ func GetUserSub(ctx context.Context) (string, bool) {
 	sub, ok := ctx.Value(UserSubKey).(string)
 	return sub, ok
 }
+
+// ValidateJWT validates a JWT token and returns the subject claim
+// This method can be called directly for validating JWTs outside of middleware
+func (m *AuthMiddleware) ValidateJWT(tokenString string) (string, error) {
+	// Parse and validate the token
+	token, err := m.parseToken(tokenString)
+	if err != nil {
+		return "", fmt.Errorf("invalid token: %w", err)
+	}
+
+	// Extract claims
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok || !token.Valid {
+		return "", fmt.Errorf("invalid token claims")
+	}
+
+	// Validate issuer
+	iss, ok := claims["iss"].(string)
+	if !ok || iss != m.config.AuthIssuer {
+		return "", fmt.Errorf("invalid issuer: expected %s, got %s", m.config.AuthIssuer, iss)
+	}
+
+	// Validate audience
+	if !m.validateAudience(claims) {
+		return "", fmt.Errorf("invalid audience: expected %s", m.config.AuthAudience)
+	}
+
+	// Extract subject
+	sub, ok := claims["sub"].(string)
+	if !ok || sub == "" {
+		return "", fmt.Errorf("missing or invalid subject claim")
+	}
+
+	return sub, nil
+}

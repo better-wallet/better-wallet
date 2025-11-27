@@ -460,6 +460,12 @@ func (s *WalletService) SignTransaction(ctx context.Context, userSub string, req
 		}
 	}
 
+	// Load condition sets referenced by policies for in_condition_set operator
+	conditionSets, err := s.loadConditionSetsForPolicies(ctx, policies)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load condition sets: %w", err)
+	}
+
 	// Evaluate policies
 	evalCtx := &policy.EvaluationContext{
 		WalletID:      wallet.ID.String(),
@@ -471,6 +477,7 @@ func (s *WalletService) SignTransaction(ctx context.Context, userSub string, req
 		Actor:         userSub,
 		SessionSigner: sessionSigner,
 		Timestamp:     time.Now(),
+		ConditionSets: conditionSets,
 	}
 
 	result, err := s.policyEng.Evaluate(ctx, policies, evalCtx)
@@ -1377,4 +1384,77 @@ func encodeTypedData(typedData TypedData) ([]byte, error) {
 // formatSignature formats a signature as a hex-encoded string with 0x prefix
 func formatSignature(signature []byte) string {
 	return "0x" + hex.EncodeToString(signature)
+}
+
+// loadConditionSetsForPolicies extracts condition set IDs from policies and loads them from the database
+// Returns a map of condition set ID -> values for use in policy evaluation
+func (s *WalletService) loadConditionSetsForPolicies(ctx context.Context, policies []*types.Policy) (map[string][]interface{}, error) {
+	result := make(map[string][]interface{})
+
+	// Extract condition set IDs from all policies
+	conditionSetIDs := make(map[string]bool)
+	for _, p := range policies {
+		if p == nil || p.Rules == nil {
+			continue
+		}
+
+		// Parse rules to find in_condition_set operators
+		rules, ok := p.Rules["rules"].([]interface{})
+		if !ok {
+			continue
+		}
+
+		for _, ruleInterface := range rules {
+			rule, ok := ruleInterface.(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			conditions, ok := rule["conditions"].([]interface{})
+			if !ok {
+				continue
+			}
+
+			for _, condInterface := range conditions {
+				cond, ok := condInterface.(map[string]interface{})
+				if !ok {
+					continue
+				}
+
+				operator, _ := cond["operator"].(string)
+				if operator == "in_condition_set" {
+					if value, ok := cond["value"].(string); ok && value != "" {
+						conditionSetIDs[value] = true
+					}
+				}
+			}
+		}
+	}
+
+	// If no condition sets referenced, return empty map
+	if len(conditionSetIDs) == 0 {
+		return result, nil
+	}
+
+	// Load each condition set from the database
+	csRepo := storage.NewConditionSetRepository(s.store)
+	for csID := range conditionSetIDs {
+		// Try to parse as UUID
+		csUUID, err := uuid.Parse(csID)
+		if err != nil {
+			// Not a valid UUID, skip
+			continue
+		}
+
+		cs, err := csRepo.GetByID(ctx, csUUID)
+		if err != nil {
+			// Log error but continue with other sets
+			continue
+		}
+		if cs != nil {
+			result[csID] = cs.Values
+		}
+	}
+
+	return result, nil
 }

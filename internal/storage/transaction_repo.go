@@ -214,6 +214,59 @@ func (r *TransactionRepository) ListByWalletID(ctx context.Context, walletID uui
 	return transactions, nil
 }
 
+// ListByWalletIDs retrieves transactions for multiple wallets
+func (r *TransactionRepository) ListByWalletIDs(ctx context.Context, walletIDs []uuid.UUID, limit int) ([]*Transaction, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	query := `
+		SELECT id, wallet_id, chain_id, tx_hash, status, method,
+			to_address, value, data, nonce, gas_limit,
+			max_fee_per_gas, max_priority_fee_per_gas, signed_tx, error_message,
+			created_at, updated_at
+		FROM transactions
+		WHERE wallet_id = ANY($1)
+		ORDER BY created_at DESC
+		LIMIT $2
+	`
+
+	rows, err := r.store.pool.Query(ctx, query, walletIDs, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list transactions: %w", err)
+	}
+	defer rows.Close()
+
+	var transactions []*Transaction
+	for rows.Next() {
+		var tx Transaction
+		if err := rows.Scan(
+			&tx.ID,
+			&tx.WalletID,
+			&tx.ChainID,
+			&tx.TxHash,
+			&tx.Status,
+			&tx.Method,
+			&tx.ToAddress,
+			&tx.Value,
+			&tx.Data,
+			&tx.Nonce,
+			&tx.GasLimit,
+			&tx.MaxFeePerGas,
+			&tx.MaxPriorityFeePerGas,
+			&tx.SignedTx,
+			&tx.ErrorMessage,
+			&tx.CreatedAt,
+			&tx.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan transaction: %w", err)
+		}
+		transactions = append(transactions, &tx)
+	}
+
+	return transactions, nil
+}
+
 // UpdateStatus updates the status of a transaction
 func (r *TransactionRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status string, txHash *string, errorMessage *string) error {
 	query := `

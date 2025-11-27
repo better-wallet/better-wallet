@@ -43,7 +43,7 @@ type EthTransaction struct {
 	Nonce                string `json:"nonce,omitempty"`
 	MaxFeePerGas         string `json:"max_fee_per_gas,omitempty"`
 	MaxPriorityFeePerGas string `json:"max_priority_fee_per_gas,omitempty"`
-	GasPrice             string `json:"gas_price,omitempty"` // Legacy
+	GasPrice             string `json:"gas_price,omitempty"` // For EIP-1559 fallback
 }
 
 // eth_signTransaction params

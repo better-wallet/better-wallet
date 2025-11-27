@@ -22,9 +22,9 @@ func (r *AuditRepository) Create(ctx context.Context, log *types.AuditLog) error
 	query := `
 		INSERT INTO audit_logs (
 			actor, action, resource_type, resource_id, policy_result,
-			signer_id, tx_hash, request_digest, request_nonce, client_ip, user_agent
+			signer_id, tx_hash, request_digest, client_ip, user_agent
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING id, created_at
 	`
 
@@ -37,7 +37,6 @@ func (r *AuditRepository) Create(ctx context.Context, log *types.AuditLog) error
 		log.SignerID,
 		log.TxHash,
 		log.RequestDigest,
-		log.RequestNonce,
 		log.ClientIP,
 		log.UserAgent,
 	).Scan(&log.ID, &log.CreatedAt)
@@ -63,7 +62,7 @@ type QueryOptions struct {
 func (r *AuditRepository) Query(ctx context.Context, opts QueryOptions) ([]*types.AuditLog, error) {
 	query := `
 		SELECT id, actor, action, resource_type, resource_id, policy_result,
-		       signer_id, tx_hash, request_digest, request_nonce, client_ip, user_agent, created_at
+		       signer_id, tx_hash, request_digest, client_ip, user_agent, created_at
 		FROM audit_logs
 		WHERE 1=1
 	`
@@ -127,7 +126,6 @@ func (r *AuditRepository) Query(ctx context.Context, opts QueryOptions) ([]*type
 			&log.SignerID,
 			&log.TxHash,
 			&log.RequestDigest,
-			&log.RequestNonce,
 			&log.ClientIP,
 			&log.UserAgent,
 			&log.CreatedAt,
@@ -145,7 +143,7 @@ func (r *AuditRepository) Query(ctx context.Context, opts QueryOptions) ([]*type
 func (r *AuditRepository) GetByID(ctx context.Context, id int64) (*types.AuditLog, error) {
 	query := `
 		SELECT id, actor, action, resource_type, resource_id, policy_result,
-		       signer_id, tx_hash, request_digest, request_nonce, client_ip, user_agent, created_at
+		       signer_id, tx_hash, request_digest, client_ip, user_agent, created_at
 		FROM audit_logs
 		WHERE id = $1
 	`
@@ -161,7 +159,6 @@ func (r *AuditRepository) GetByID(ctx context.Context, id int64) (*types.AuditLo
 		&log.SignerID,
 		&log.TxHash,
 		&log.RequestDigest,
-		&log.RequestNonce,
 		&log.ClientIP,
 		&log.UserAgent,
 		&log.CreatedAt,
