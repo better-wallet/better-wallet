@@ -2,7 +2,9 @@ package api
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/better-wallet/better-wallet/internal/storage"
 	apperrors "github.com/better-wallet/better-wallet/pkg/errors"
@@ -109,54 +111,69 @@ func (s *Server) handleGetUser(w http.ResponseWriter, r *http.Request, userID uu
 	s.writeJSON(w, http.StatusOK, response)
 }
 
-// handleListUsers lists users with search capability
+// handleListUsers lists users who have wallets in the current app
+// Only returns users who have at least one wallet belonging to the current app
 func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
-	userSub, ok := getUserSub(r.Context())
+	_, ok := getUserSub(r.Context())
 	if !ok {
 		s.writeError(w, apperrors.ErrUnauthorized)
 		return
 	}
 
-	// Get current user
-	repo := storage.NewUserRepository(s.store)
-	currentUser, err := repo.GetByExternalSub(r.Context(), userSub)
-	if err != nil || currentUser == nil {
+	// Get app_id from context (set by app auth middleware)
+	appID, err := storage.RequireAppID(r.Context())
+	if err != nil {
 		s.writeError(w, apperrors.NewWithDetail(
-			apperrors.ErrCodeInternalError,
-			"Failed to get current user",
-			"",
-			http.StatusInternalServerError,
+			apperrors.ErrCodeUnauthorized,
+			"App authentication required",
+			err.Error(),
+			http.StatusUnauthorized,
 		))
 		return
 	}
 
 	// Parse query parameters
 	query := r.URL.Query()
-	externalSubSearch := query.Get("external_sub")
-
-	// Build query based on search criteria
-	var sqlQuery string
-	var args []interface{}
-
-	if externalSubSearch != "" {
-		// Search by external_sub (partial match)
-		sqlQuery = `
-			SELECT id, external_sub, created_at
-			FROM users
-			WHERE external_sub ILIKE $1
-			ORDER BY created_at DESC
-			LIMIT 100
-		`
-		args = append(args, "%"+externalSubSearch+"%")
-	} else {
-		// Return only the current user (users can only see themselves)
-		sqlQuery = `
-			SELECT id, external_sub, created_at
-			FROM users
-			WHERE id = $1
-		`
-		args = append(args, currentUser.ID)
+	cursor := query.Get("cursor")
+	limitStr := query.Get("limit")
+	limit := 20
+	if limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 && l <= 100 {
+			limit = l
+		}
 	}
+
+	// Query users who have wallets in this app
+	// This ensures multi-tenant isolation: only users with wallets in the current app are visible
+	sqlQuery := `
+		SELECT DISTINCT u.id, u.external_sub, u.created_at
+		FROM users u
+		INNER JOIN wallets w ON u.id = w.user_id
+		WHERE w.app_id = $1
+	`
+	args := []interface{}{appID}
+	argIdx := 2
+
+	if cursor != "" {
+		// Parse cursor as Unix milliseconds and convert to time.Time
+		cursorMillis, err := strconv.ParseInt(cursor, 10, 64)
+		if err != nil {
+			s.writeError(w, apperrors.NewWithDetail(
+				apperrors.ErrCodeBadRequest,
+				"Invalid cursor",
+				"Cursor must be a valid Unix timestamp in milliseconds",
+				http.StatusBadRequest,
+			))
+			return
+		}
+		cursorTime := time.UnixMilli(cursorMillis)
+		sqlQuery += ` AND u.created_at < $` + strconv.Itoa(argIdx)
+		args = append(args, cursorTime)
+		argIdx++
+	}
+
+	sqlQuery += ` ORDER BY u.created_at DESC LIMIT $` + strconv.Itoa(argIdx)
+	args = append(args, limit+1) // Fetch one extra to determine if there's a next page
 
 	rows, err := s.store.DB().Query(r.Context(), sqlQuery, args...)
 	if err != nil {
@@ -173,7 +190,6 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 	var users []UserResponse
 	for rows.Next() {
 		var u types.User
-
 		err := rows.Scan(
 			&u.ID,
 			&u.ExternalSub,
@@ -182,12 +198,21 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
-
 		users = append(users, convertUserToResponse(&u))
 	}
 
+	// Determine next cursor
+	var nextCursor *string
+	if len(users) > limit {
+		users = users[:limit]
+		cursorVal := users[len(users)-1].CreatedAt
+		cursorStr := strconv.FormatInt(cursorVal, 10)
+		nextCursor = &cursorStr
+	}
+
 	response := ListUsersResponse{
-		Data: users,
+		Data:       users,
+		NextCursor: nextCursor,
 	}
 
 	s.writeJSON(w, http.StatusOK, response)

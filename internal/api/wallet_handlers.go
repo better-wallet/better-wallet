@@ -88,6 +88,17 @@ type SignTransactionResponse struct {
 	SignedTx string `json:"signed_tx"`
 }
 
+// SignMessageAPIRequest represents the API request to sign a personal message
+type SignMessageAPIRequest struct {
+	Message  string `json:"message"`           // The message to sign
+	Encoding string `json:"encoding,omitempty"` // "utf8" (default) or "hex"
+}
+
+// SignMessageResponse represents the API response for message signing
+type SignMessageResponse struct {
+	Signature string `json:"signature"` // 0x-prefixed hex signature
+}
+
 // handleWallets handles wallet list and creation
 func (s *Server) handleWallets(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -157,6 +168,11 @@ func (s *Server) handleWalletOperationsRouter(w http.ResponseWriter, r *http.Req
 		case "sign":
 			if r.Method == http.MethodPost {
 				s.handleSignTransaction(w, r, walletID)
+				return
+			}
+		case "sign-message":
+			if r.Method == http.MethodPost {
+				s.handleSignMessage(w, r, walletID)
 				return
 			}
 		case "session_signers":
@@ -645,6 +661,92 @@ func (s *Server) handleSignTransaction(w http.ResponseWriter, r *http.Request, w
 	s.writeJSON(w, http.StatusOK, response)
 }
 
+// handleSignMessage handles personal_sign message signing requests
+func (s *Server) handleSignMessage(w http.ResponseWriter, r *http.Request, walletID uuid.UUID) {
+	userSub, ok := getUserSub(r.Context())
+	if !ok {
+		s.writeError(w, apperrors.ErrUnauthorized)
+		return
+	}
+
+	var req SignMessageAPIRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeBadRequest,
+			"Invalid request body",
+			err.Error(),
+			http.StatusBadRequest,
+		))
+		return
+	}
+
+	// Validate message is not empty
+	if req.Message == "" {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeBadRequest,
+			"Invalid message",
+			"Message cannot be empty",
+			http.StatusBadRequest,
+		))
+		return
+	}
+
+	// Default encoding to utf8
+	if req.Encoding == "" {
+		req.Encoding = "utf8"
+	}
+	if req.Encoding != "utf8" && req.Encoding != "hex" {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeBadRequest,
+			"Invalid encoding",
+			"Encoding must be 'utf8' or 'hex'",
+			http.StatusBadRequest,
+		))
+		return
+	}
+
+	// Build canonical payload for authorization verification
+	_, canonicalPayload, err := auth.BuildCanonicalPayload(r)
+	if err != nil {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeInternalError,
+			"Failed to build canonical payload",
+			err.Error(),
+			http.StatusInternalServerError,
+		))
+		return
+	}
+
+	// Extract signatures from headers
+	signatures := auth.ExtractSignatures(r)
+
+	// Call the service
+	signature, err := s.walletService.SignMessage(r.Context(), userSub, &app.SignMessageRequest{
+		WalletID:         walletID,
+		Message:          req.Message,
+		Encoding:         req.Encoding,
+		Signatures:       signatures,
+		CanonicalPayload: canonicalPayload,
+	})
+	if err != nil {
+		if appErr, ok := apperrors.IsAppError(err); ok {
+			s.writeError(w, appErr)
+			return
+		}
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeInternalError,
+			"Failed to sign message",
+			err.Error(),
+			http.StatusInternalServerError,
+		))
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, SignMessageResponse{
+		Signature: signature,
+	})
+}
+
 // verifyAuthorizationSignature verifies the x-authorization-signature header
 func (s *Server) verifyAuthorizationSignature(r *http.Request, walletID uuid.UUID) error {
 	// Build canonical payload
@@ -910,8 +1012,16 @@ func (s *Server) handleExportWallet(w http.ResponseWriter, r *http.Request, wall
 
 	// Export wallet (retrieve private key from key executor)
 	// This is a sensitive operation that should be carefully controlled
-	privateKeyHex, err := s.walletService.ExportWallet(r.Context(), walletID)
+	privateKeyBytes, err := s.walletService.ExportWallet(r.Context(), userSub, &app.ExportWalletRequest{
+		WalletID:         walletID,
+		Signatures:       signatures,
+		CanonicalPayload: canonicalBytes,
+	})
 	if err != nil {
+		if appErr, ok := apperrors.IsAppError(err); ok {
+			s.writeError(w, appErr)
+			return
+		}
 		s.writeError(w, apperrors.NewWithDetail(
 			apperrors.ErrCodeInternalError,
 			"Failed to export wallet",
@@ -922,7 +1032,7 @@ func (s *Server) handleExportWallet(w http.ResponseWriter, r *http.Request, wall
 	}
 
 	// Encrypt the private key with HPKE
-	encrypted, err := s.hpkeEncrypt(req.RecipientPublicKey, []byte(privateKeyHex))
+	encrypted, err := s.hpkeEncrypt(req.RecipientPublicKey, privateKeyBytes)
 	if err != nil {
 		s.writeError(w, apperrors.NewWithDetail(
 			apperrors.ErrCodeInternalError,
@@ -1203,9 +1313,34 @@ func (s *Server) handleAuthenticateWallet(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Sign the message with the wallet's private key (app-scoped by context automatically)
-	signature, err := s.walletService.SignMessage(r.Context(), walletID, req.Message)
+	// Build canonical payload for authorization verification
+	_, canonicalPayload, err := auth.BuildCanonicalPayload(r)
 	if err != nil {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeInternalError,
+			"Failed to build canonical payload",
+			err.Error(),
+			http.StatusInternalServerError,
+		))
+		return
+	}
+
+	// Extract signatures from headers
+	signatures := auth.ExtractSignatures(r)
+
+	// Sign the message with the wallet's private key (app-scoped by context automatically)
+	signature, err := s.walletService.SignMessage(r.Context(), userSub, &app.SignMessageRequest{
+		WalletID:         walletID,
+		Message:          req.Message,
+		Encoding:         "utf8",
+		Signatures:       signatures,
+		CanonicalPayload: canonicalPayload,
+	})
+	if err != nil {
+		if appErr, ok := apperrors.IsAppError(err); ok {
+			s.writeError(w, appErr)
+			return
+		}
 		s.writeError(w, apperrors.NewWithDetail(
 			apperrors.ErrCodeInternalError,
 			"Failed to sign message",

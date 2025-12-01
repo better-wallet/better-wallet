@@ -15,8 +15,12 @@ type KeyExecutor interface {
 	// Sign signs a transaction using the key material
 	SignTransaction(ctx context.Context, keyMaterial *KeyMaterial, tx *types.Transaction, chainID int64) (*types.Transaction, error)
 
-	// SignMessage signs a raw message
+	// SignMessage signs a raw message (will hash the message internally)
 	SignMessage(ctx context.Context, keyMaterial *KeyMaterial, message []byte) ([]byte, error)
+
+	// SignHash signs a pre-hashed 32-byte value directly (no additional hashing)
+	// Use this for EIP-191 personal_sign and EIP-712 typed data where the hash is computed externally
+	SignHash(ctx context.Context, keyMaterial *KeyMaterial, hash []byte) ([]byte, error)
 
 	// Encrypt encrypts data (for storing shares)
 	Encrypt(ctx context.Context, data []byte) ([]byte, error)

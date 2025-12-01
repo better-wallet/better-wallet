@@ -237,3 +237,34 @@ const (
 	AppStatusSuspended = "suspended"
 	AppStatusDeleted   = "deleted"
 )
+
+// SigningMethod represents the type of signing operation
+type SigningMethod string
+
+const (
+	// SignMethodTransaction signs an Ethereum transaction (eth_sendTransaction, eth_signTransaction)
+	SignMethodTransaction SigningMethod = "sign_transaction"
+	// SignMethodPersonal signs a personal message (personal_sign, eth_sign)
+	SignMethodPersonal SigningMethod = "personal_sign"
+	// SignMethodTypedData signs EIP-712 typed data (eth_signTypedData_v4)
+	SignMethodTypedData SigningMethod = "sign_typed_data"
+)
+
+// AllSigningMethods returns all valid signing methods
+func AllSigningMethods() []SigningMethod {
+	return []SigningMethod{
+		SignMethodTransaction,
+		SignMethodPersonal,
+		SignMethodTypedData,
+	}
+}
+
+// IsValidSigningMethod checks if a method string is a valid signing method
+func IsValidSigningMethod(method string) bool {
+	switch SigningMethod(method) {
+	case SignMethodTransaction, SignMethodPersonal, SignMethodTypedData:
+		return true
+	default:
+		return false
+	}
+}

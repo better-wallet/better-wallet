@@ -81,12 +81,13 @@ func NewEngine() *Engine {
 }
 
 // Evaluate evaluates a request against policies
+// Uses default-deny semantics: if no policies are configured, the request is denied
 func (e *Engine) Evaluate(ctx context.Context, policies []*types.Policy, evalCtx *EvaluationContext) (*EvaluationResult, error) {
-	// If no policies are configured, allow by default (permissive mode for MVP)
+	// Default-deny: if no policies are configured, deny the request
 	if len(policies) == 0 {
 		return &EvaluationResult{
-			Decision: DecisionAllow,
-			Reason:   "No policies configured - allowing by default",
+			Decision: DecisionDeny,
+			Reason:   "No policies configured - default deny",
 		}, nil
 	}
 

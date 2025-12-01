@@ -89,7 +89,7 @@ func (k *KMSExecutor) SignTransaction(ctx context.Context, keyMaterial *KeyMater
 	return signedTx, nil
 }
 
-// SignMessage signs a raw message
+// SignMessage signs a raw message (hashes internally)
 func (k *KMSExecutor) SignMessage(ctx context.Context, keyMaterial *KeyMaterial, message []byte) ([]byte, error) {
 	// Reconstruct the private key from shares
 	privateKey, err := k.reconstructKey(keyMaterial)
@@ -105,6 +105,29 @@ func (k *KMSExecutor) SignMessage(ctx context.Context, keyMaterial *KeyMaterial,
 	signature, err := ethcrypto.Sign(hash.Bytes(), privateKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to sign message: %w", err)
+	}
+
+	return signature, nil
+}
+
+// SignHash signs a pre-hashed 32-byte value directly (no additional hashing)
+// Use this for EIP-191 personal_sign and EIP-712 typed data where the hash is computed externally
+func (k *KMSExecutor) SignHash(ctx context.Context, keyMaterial *KeyMaterial, hash []byte) ([]byte, error) {
+	if len(hash) != 32 {
+		return nil, fmt.Errorf("hash must be exactly 32 bytes, got %d", len(hash))
+	}
+
+	// Reconstruct the private key from shares
+	privateKey, err := k.reconstructKey(keyMaterial)
+	if err != nil {
+		return nil, fmt.Errorf("failed to reconstruct key: %w", err)
+	}
+	defer k.zeroKey(privateKey)
+
+	// Sign the hash directly without additional hashing
+	signature, err := ethcrypto.Sign(hash, privateKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign hash: %w", err)
 	}
 
 	return signature, nil

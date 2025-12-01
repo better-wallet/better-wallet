@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	internalcrypto "github.com/better-wallet/better-wallet/internal/crypto"
 	"github.com/better-wallet/better-wallet/internal/keyexec"
 	"github.com/better-wallet/better-wallet/internal/middleware"
 	"github.com/better-wallet/better-wallet/internal/policy"
@@ -393,7 +394,7 @@ func (s *WalletService) SignTransaction(ctx context.Context, userSub string, req
 	}
 
 	// Verify authorization signature (owner or active session signer)
-	matchedSignerID, err := s.verifyAuthorizationSignature(ctx, wallet, req.Signatures, req.CanonicalPayload)
+	matchedSignerID, err := s.verifyAuthorizationSignature(ctx, wallet, req.Signatures, req.CanonicalPayload, types.SignMethodTransaction)
 	if err != nil {
 		return nil, err
 	}
@@ -783,7 +784,8 @@ func (s *WalletService) DeleteSessionSigner(ctx context.Context, userSub string,
 
 // verifyAuthorizationSignature checks that at least one provided signature is valid for the wallet owner
 // or an active session signer. It returns the authorization key ID that validated (empty string means owner).
-func (s *WalletService) verifyAuthorizationSignature(ctx context.Context, wallet *types.Wallet, signatures []string, canonicalPayload []byte) (string, error) {
+// The requiredMethod parameter specifies which signing method is being requested (e.g., sign_transaction, personal_sign).
+func (s *WalletService) verifyAuthorizationSignature(ctx context.Context, wallet *types.Wallet, signatures []string, canonicalPayload []byte, requiredMethod types.SigningMethod) (string, error) {
 	if len(signatures) == 0 {
 		return "", apperrors.NewWithDetail(
 			apperrors.ErrCodeUnauthorized,
@@ -803,7 +805,7 @@ func (s *WalletService) verifyAuthorizationSignature(ctx context.Context, wallet
 	}
 
 	// Owner is a single authorization key - verify single signature or session signer
-	return s.verifySingleOwnerSignature(ctx, wallet, signatures, canonicalPayload)
+	return s.verifySingleOwnerSignature(ctx, wallet, signatures, canonicalPayload, requiredMethod)
 }
 
 // verifyQuorumSignatures verifies M-of-N threshold signatures for a key quorum
@@ -865,10 +867,11 @@ func (s *WalletService) verifyQuorumSignatures(ctx context.Context, quorum *type
 }
 
 // verifySingleOwnerSignature verifies signature for a single owner key or session signer
-func (s *WalletService) verifySingleOwnerSignature(ctx context.Context, wallet *types.Wallet, signatures []string, canonicalPayload []byte) (string, error) {
+// The requiredMethod parameter specifies which signing method is being requested.
+func (s *WalletService) verifySingleOwnerSignature(ctx context.Context, wallet *types.Wallet, signatures []string, canonicalPayload []byte, requiredMethod types.SigningMethod) (string, error) {
 	// Build list of allowed authorization keys
 	allowed := make(map[uuid.UUID]*types.SessionSigner)
-	allowed[wallet.OwnerID] = nil // nil indicates primary owner
+	allowed[wallet.OwnerID] = nil // nil indicates primary owner (has all permissions)
 
 	// Active session signers
 	sessionSigners, err := s.sessionRepo.GetActiveByWallet(ctx, wallet.ID, time.Now())
@@ -877,18 +880,9 @@ func (s *WalletService) verifySingleOwnerSignature(ctx context.Context, wallet *
 	}
 
 	for _, ss := range sessionSigners {
-		// If allowed_methods is set, require sign_transaction to be allowed
-		if len(ss.AllowedMethods) > 0 {
-			allowedMethod := false
-			for _, m := range ss.AllowedMethods {
-				if m == "sign_transaction" {
-					allowedMethod = true
-					break
-				}
-			}
-			if !allowedMethod {
-				continue
-			}
+		// Check if this session signer is allowed to perform the required method
+		if !s.sessionSignerAllowsMethod(ss, requiredMethod) {
+			continue
 		}
 
 		keyID, err := uuid.Parse(ss.SignerID)
@@ -936,6 +930,23 @@ func (s *WalletService) verifySingleOwnerSignature(ctx context.Context, wallet *
 		"no signature matched an active owner or session signer key",
 		http.StatusUnauthorized,
 	)
+}
+
+// sessionSignerAllowsMethod checks if a session signer is allowed to perform a signing method
+func (s *WalletService) sessionSignerAllowsMethod(ss *types.SessionSigner, method types.SigningMethod) bool {
+	// If no allowed_methods specified, allow all methods (backwards compatibility)
+	if len(ss.AllowedMethods) == 0 {
+		return true
+	}
+
+	// Check if the required method is in the allowed list
+	for _, allowedMethod := range ss.AllowedMethods {
+		if types.SigningMethod(allowedMethod) == method {
+			return true
+		}
+	}
+
+	return false
 }
 
 // GetWallet retrieves a single wallet by ID
@@ -1198,62 +1209,281 @@ func (s *WalletService) GetOwner(ctx context.Context, ownerID uuid.UUID) (*auth.
 	return nil, fmt.Errorf("owner not found")
 }
 
+// ExportWalletRequest represents a request to export a wallet's private key
+type ExportWalletRequest struct {
+	WalletID         uuid.UUID
+	Signatures       []string
+	CanonicalPayload []byte
+}
+
 // ExportWallet exports the private key for a wallet
-// NOTE: This is a placeholder implementation. Full implementation requires:
-// 1. Multi-party computation to reconstruct private key from shares
-// 2. Proper authorization and audit logging
-// 3. Rate limiting and security controls
-func (s *WalletService) ExportWallet(ctx context.Context, walletID uuid.UUID) (string, error) {
+// SECURITY: This operation is highly sensitive and requires:
+// 1. Authorization signature from wallet owner
+// 2. Full audit logging
+// 3. Rate limiting (should be implemented at API layer)
+func (s *WalletService) ExportWallet(ctx context.Context, userSub string, req *ExportWalletRequest) ([]byte, error) {
 	// Get wallet (automatically scoped to app_id from context)
-	wallet, err := s.walletRepo.GetByID(ctx, walletID)
+	wallet, err := s.walletRepo.GetByID(ctx, req.WalletID)
 	if err != nil {
-		return "", fmt.Errorf("failed to get wallet: %w", err)
+		return nil, fmt.Errorf("failed to get wallet: %w", err)
 	}
 	if wallet == nil {
-		return "", fmt.Errorf("wallet not found")
+		return nil, apperrors.WalletNotFound(req.WalletID.String())
+	}
+
+	// Verify ownership
+	user, err := s.userRepo.GetByExternalSub(ctx, userSub)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user: %w", err)
+	}
+	if user == nil || user.ID != wallet.UserID {
+		return nil, apperrors.ErrForbidden
+	}
+
+	// Verify authorization signature (owner only - session signers cannot export)
+	// For export, we only accept the wallet owner's signature, not session signers
+	ownerKey, err := s.authKeyRepo.GetByID(ctx, wallet.OwnerID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get owner key: %w", err)
+	}
+	if ownerKey == nil || ownerKey.Status != types.StatusActive {
+		return nil, apperrors.NewWithDetail(
+			apperrors.ErrCodeForbidden,
+			"Owner key not found or inactive",
+			"",
+			http.StatusForbidden,
+		)
+	}
+
+	// Verify the signature is from the owner
+	publicKeyPEM, err := auth.PublicKeyToPEM(ownerKey.PublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert public key: %w", err)
+	}
+
+	verifier := auth.NewSignatureVerifier()
+	verified := false
+	for _, sig := range req.Signatures {
+		if ok, err := verifier.VerifySignature(sig, req.CanonicalPayload, publicKeyPEM); err == nil && ok {
+			verified = true
+			break
+		}
+	}
+	if !verified {
+		return nil, apperrors.NewWithDetail(
+			apperrors.ErrCodeUnauthorized,
+			"Invalid authorization signature",
+			"Only wallet owner can export private key",
+			http.StatusUnauthorized,
+		)
 	}
 
 	// Get wallet shares (encrypted private key material)
 	shareRepo := storage.NewWalletShareRepository(s.store)
-	shares, err := shareRepo.GetByWalletID(ctx, walletID)
-	if err != nil || len(shares) == 0 {
-		return "", fmt.Errorf("failed to get wallet shares: %w", err)
+	shares, err := shareRepo.GetByWalletID(ctx, req.WalletID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get wallet shares: %w", err)
+	}
+	if len(shares) < 2 {
+		return nil, fmt.Errorf("insufficient shares to reconstruct key")
 	}
 
-	// TODO: Implement actual key reconstruction from shares
-	// This would involve:
-	// 1. Decrypting each share using KMS
-	// 2. Combining shares using threshold cryptography
-	// 3. Reconstructing the private key
+	// Decrypt shares and reconstruct private key
+	var authShare, execShare []byte
+	for _, share := range shares {
+		decrypted, err := s.keyExec.Decrypt(ctx, share.BlobEncrypted)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt share: %w", err)
+		}
 
-	// For now, return placeholder indicating feature needs implementation
-	return "", fmt.Errorf("wallet export not yet fully implemented")
+		if share.ShareType == types.ShareTypeAuth {
+			authShare = decrypted
+		} else if share.ShareType == types.ShareTypeExec {
+			execShare = decrypted
+		}
+	}
+
+	if authShare == nil || execShare == nil {
+		return nil, fmt.Errorf("missing required shares")
+	}
+
+	// Reconstruct private key using internal crypto package
+	privateKeyBytes, err := internalcrypto.CombineShares(authShare, execShare)
+	if err != nil {
+		return nil, fmt.Errorf("failed to combine shares: %w", err)
+	}
+
+	// Audit log the export (this is a sensitive operation)
+	s.auditRepo.Create(ctx, &types.AuditLog{
+		Actor:        userSub,
+		Action:       "wallet.export",
+		ResourceType: "wallet",
+		ResourceID:   wallet.ID.String(),
+		ClientIP:     middleware.GetClientIP(ctx),
+		UserAgent:    middleware.GetUserAgent(ctx),
+	})
+
+	return privateKeyBytes, nil
 }
 
-// SignMessage signs an arbitrary message with the wallet's private key
-// NOTE: This is a placeholder implementation. Full implementation requires:
-// 1. Proper message formatting (EIP-191 or EIP-712)
-// 2. Integration with key executor for signing
-// 3. Support for different chain types
-func (s *WalletService) SignMessage(ctx context.Context, walletID uuid.UUID, message string) (string, error) {
+// SignMessageRequest represents a request to sign a personal message
+type SignMessageRequest struct {
+	WalletID         uuid.UUID
+	Message          string   // The message to sign (can be raw string or hex-encoded)
+	Encoding         string   // "utf8" or "hex" - default "utf8"
+	Signatures       []string // Authorization signatures
+	CanonicalPayload []byte
+}
+
+// SignMessage signs an arbitrary message with the wallet's private key using EIP-191 personal_sign
+func (s *WalletService) SignMessage(ctx context.Context, userSub string, req *SignMessageRequest) (string, error) {
 	// Get wallet (automatically scoped to app_id from context)
-	wallet, err := s.walletRepo.GetByID(ctx, walletID)
+	wallet, err := s.walletRepo.GetByID(ctx, req.WalletID)
 	if err != nil {
 		return "", fmt.Errorf("failed to get wallet: %w", err)
 	}
 	if wallet == nil {
-		return "", fmt.Errorf("wallet not found")
+		return "", apperrors.WalletNotFound(req.WalletID.String())
 	}
 
-	// TODO: Implement actual message signing
-	// This would involve:
-	// 1. Formatting message according to EIP-191 (personal_sign)
-	// 2. Hashing the formatted message
-	// 3. Using key executor to sign the hash
-	// 4. Formatting signature properly (v, r, s)
+	// Verify ownership
+	user, err := s.userRepo.GetByExternalSub(ctx, userSub)
+	if err != nil {
+		return "", fmt.Errorf("failed to get user: %w", err)
+	}
+	if user == nil || user.ID != wallet.UserID {
+		return "", apperrors.ErrForbidden
+	}
 
-	// For now, return placeholder indicating feature needs implementation
-	return "", fmt.Errorf("message signing not yet fully implemented")
+	// Verify authorization signature (owner or session signer with personal_sign permission)
+	matchedSignerID, err := s.verifyAuthorizationSignature(ctx, wallet, req.Signatures, req.CanonicalPayload, types.SignMethodPersonal)
+	if err != nil {
+		return "", err
+	}
+
+	// Load policies and evaluate
+	var sessionSigner *types.SessionSigner
+	if matchedSignerID != "" && matchedSignerID != wallet.OwnerID.String() {
+		signerUUID, err := uuid.Parse(matchedSignerID)
+		if err == nil {
+			sessionSigner, _ = s.sessionRepo.GetByID(ctx, signerUUID)
+		}
+	}
+
+	// Load policies
+	var policies []*types.Policy
+	if sessionSigner != nil && sessionSigner.PolicyOverrideID != nil {
+		policy, err := s.policyRepo.GetByID(ctx, *sessionSigner.PolicyOverrideID)
+		if err != nil {
+			return "", fmt.Errorf("failed to load override policy: %w", err)
+		}
+		if policy != nil {
+			policies = []*types.Policy{policy}
+		}
+	} else {
+		policies, err = s.policyRepo.GetByWalletID(ctx, wallet.ID)
+		if err != nil {
+			return "", fmt.Errorf("failed to load policies: %w", err)
+		}
+	}
+
+	// Evaluate policies
+	evalCtx := &policy.EvaluationContext{
+		WalletID:        wallet.ID.String(),
+		ChainType:       wallet.ChainType,
+		Address:         wallet.Address,
+		Method:          "personal_sign",
+		PersonalMessage: req.Message,
+		Actor:           userSub,
+		SessionSigner:   sessionSigner,
+		Timestamp:       time.Now(),
+	}
+
+	result, err := s.policyEng.Evaluate(ctx, policies, evalCtx)
+	if err != nil {
+		return "", fmt.Errorf("failed to evaluate policy: %w", err)
+	}
+
+	if result.Decision == policy.DecisionDeny {
+		s.auditRepo.Create(ctx, &types.AuditLog{
+			Actor:        userSub,
+			Action:       "wallet.sign_message",
+			ResourceType: "wallet",
+			ResourceID:   wallet.ID.String(),
+			PolicyResult: &result.Reason,
+			ClientIP:     middleware.GetClientIP(ctx),
+			UserAgent:    middleware.GetUserAgent(ctx),
+		})
+		return "", apperrors.PolicyDenied(result.Reason)
+	}
+
+	// Decode message based on encoding
+	var messageBytes []byte
+	if req.Encoding == "hex" {
+		messageBytes = common.FromHex(req.Message)
+	} else {
+		messageBytes = []byte(req.Message)
+	}
+
+	// Format message according to EIP-191 (personal_sign)
+	// The prefix is: "\x19Ethereum Signed Message:\n" + len(message) + message
+	prefix := fmt.Sprintf("\x19Ethereum Signed Message:\n%d", len(messageBytes))
+	prefixedMessage := append([]byte(prefix), messageBytes...)
+
+	// Hash the prefixed message
+	hash := crypto.Keccak256(prefixedMessage)
+
+	// Load key material
+	shareRepo := storage.NewWalletShareRepository(s.store)
+	shares, err := shareRepo.GetByWalletID(ctx, wallet.ID)
+	if err != nil {
+		return "", fmt.Errorf("failed to load key shares: %w", err)
+	}
+
+	var authShare, execShare []byte
+	for _, share := range shares {
+		decrypted, err := s.keyExec.Decrypt(ctx, share.BlobEncrypted)
+		if err != nil {
+			return "", fmt.Errorf("failed to decrypt share: %w", err)
+		}
+
+		if share.ShareType == types.ShareTypeAuth {
+			authShare = decrypted
+		} else if share.ShareType == types.ShareTypeExec {
+			execShare = decrypted
+		}
+	}
+
+	keyMaterial := &keyexec.KeyMaterial{
+		Address:   wallet.Address,
+		AuthShare: authShare,
+		ExecShare: execShare,
+		Version:   1,
+	}
+
+	// Sign the pre-computed hash (use SignHash to avoid double-hashing)
+	signature, err := s.keyExec.SignHash(ctx, keyMaterial, hash)
+	if err != nil {
+		return "", fmt.Errorf("failed to sign message: %w", err)
+	}
+
+	// Adjust v value for Ethereum compatibility (27 or 28 instead of 0 or 1)
+	if len(signature) == 65 && (signature[64] == 0 || signature[64] == 1) {
+		signature[64] += 27
+	}
+
+	// Audit log
+	sigStr := formatSignature(signature)
+	s.auditRepo.Create(ctx, &types.AuditLog{
+		Actor:        userSub,
+		Action:       "wallet.sign_message",
+		ResourceType: "wallet",
+		ResourceID:   wallet.ID.String(),
+		ClientIP:     middleware.GetClientIP(ctx),
+		UserAgent:    middleware.GetUserAgent(ctx),
+	})
+
+	return sigStr, nil
 }
 
 // TypedData represents EIP-712 typed data structure
@@ -1309,8 +1539,8 @@ func (s *WalletService) SignTypedData(ctx context.Context, walletID uuid.UUID, t
 		Version:   1,
 	}
 
-	// Use key executor to sign the hash
-	signature, err := s.keyExec.SignMessage(ctx, keyMaterial, hash)
+	// Use key executor to sign the pre-computed hash (use SignHash to avoid double-hashing)
+	signature, err := s.keyExec.SignHash(ctx, keyMaterial, hash)
 	if err != nil {
 		return "", fmt.Errorf("failed to sign typed data: %w", err)
 	}

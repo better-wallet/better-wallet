@@ -303,14 +303,14 @@ func TestEngineEvaluate_FieldSourceOperatorSchema(t *testing.T) {
 			expected: DecisionAllow,
 		},
 		{
-			name: "no_policies_allows_by_default",
+			name: "no_policies_denies_by_default",
 			policy: nil,
 			evalCtx: &EvaluationContext{
 				ChainType: "ethereum",
 				Method:    "eth_sendTransaction",
 				Timestamp: time.Now(),
 			},
-			expected: DecisionAllow,
+			expected: DecisionDeny, // Default-deny: no policies means no explicit allow
 		},
 	}
 

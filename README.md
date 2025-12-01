@@ -57,26 +57,19 @@ cd better-wallet
 # Create a PostgreSQL database
 createdb better_wallet
 
-# Run migrations
-psql -d better_wallet -f migrations/0001_initial_schema.up.sql
+# Set up Dashboard and push schema
+cd dashboard
+bun install
+DATABASE_URL=postgres://user:pass@localhost:5432/better_wallet bun run db:push
+cd ..
 ```
 
 3. **Configure environment variables**
-```bash
-cp .env.example .env
-# Edit .env with your configuration
-```
 
-Example `.env`:
+Create `.env` for the Go backend:
 ```env
 # Database
 POSTGRES_DSN=postgres://user:pass@localhost:5432/better_wallet?sslmode=disable
-
-# Authentication (use your OIDC provider)
-AUTH_KIND=oidc
-AUTH_ISSUER=https://your-auth-provider.com
-AUTH_AUDIENCE=your-app-id
-AUTH_JWKS_URI=https://your-auth-provider.com/.well-known/jwks.json
 
 # Key Execution Backend
 EXECUTION_BACKEND=kms
@@ -87,6 +80,11 @@ RPC_ENDPOINT=https://eth-mainnet.g.alchemy.com/v2/YOUR_API_KEY
 
 # Server
 PORT=8080
+```
+
+Create `dashboard/.env` for the Dashboard:
+```env
+DATABASE_URL=postgres://user:pass@localhost:5432/better_wallet?sslmode=disable
 ```
 
 4. **Build and run**
@@ -225,6 +223,8 @@ Example policy structure:
 better-wallet/
 ├── cmd/
 │   └── server/          # Main application entry point
+├── dashboard/           # Next.js dashboard (manages DB schema)
+│   └── src/server/db/   # Drizzle schema (single source of truth)
 ├── internal/
 │   ├── api/             # HTTP handlers and server
 │   ├── app/             # Application/business logic layer
@@ -237,7 +237,6 @@ better-wallet/
 ├── pkg/
 │   ├── errors/          # Error definitions
 │   └── types/           # Shared type definitions
-├── migrations/          # SQL migration files
 └── docs/                # Documentation
 ```
 
@@ -247,11 +246,21 @@ better-wallet/
 go test ./...
 ```
 
-### Database Migrations
+### Database Schema
 
-To roll back the database schema:
+The database schema is managed by Drizzle in the `dashboard/` project. To update the schema:
+
 ```bash
-psql -d better_wallet -f migrations/0001_initial_schema.down.sql
+cd dashboard
+
+# Push schema changes directly to database
+bun run db:push
+
+# Or generate migration files
+bun run db:generate
+
+# Open Drizzle Studio to view/edit data
+bun run db:studio
 ```
 
 ## 🗺️ Roadmap
