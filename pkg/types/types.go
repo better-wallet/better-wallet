@@ -20,6 +20,7 @@ type AuthorizationKey struct {
 	Algorithm   string     `json:"algorithm"` // p256, ed25519
 	OwnerEntity string     `json:"owner_entity"`
 	Status      string     `json:"status"` // active, rotated, revoked
+	AppID       *uuid.UUID `json:"app_id,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
 	RotatedAt   *time.Time `json:"rotated_at,omitempty"`
 }
@@ -30,18 +31,20 @@ type KeyQuorum struct {
 	Threshold int         `json:"threshold"`
 	KeyIDs    []uuid.UUID `json:"key_ids"`
 	Status    string      `json:"status"` // active, inactive
+	AppID     *uuid.UUID  `json:"app_id,omitempty"`
 	CreatedAt time.Time   `json:"created_at"`
 }
 
 // Wallet represents a blockchain wallet
 type Wallet struct {
-	ID          uuid.UUID `json:"id"`
-	UserID      uuid.UUID `json:"user_id"`
-	ChainType   string    `json:"chain_type"`   // ethereum, solana, etc.
-	OwnerID     uuid.UUID `json:"owner_id"`     // references authorization_keys or key_quorums
-	ExecBackend string    `json:"exec_backend"` // kms, tee
-	Address     string    `json:"address"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID          uuid.UUID  `json:"id"`
+	UserID      uuid.UUID  `json:"user_id"`
+	ChainType   string     `json:"chain_type"`   // ethereum, solana, etc.
+	OwnerID     uuid.UUID  `json:"owner_id"`     // references authorization_keys or key_quorums
+	ExecBackend string     `json:"exec_backend"` // kms, tee
+	Address     string     `json:"address"`
+	AppID       *uuid.UUID `json:"app_id,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
 }
 
 // WalletShare represents encrypted key material
@@ -61,6 +64,7 @@ type Policy struct {
 	Version   string                 `json:"version"`
 	Rules     map[string]interface{} `json:"rules"`
 	OwnerID   uuid.UUID              `json:"owner_id"` // Authorization key ID that owns this policy
+	AppID     *uuid.UUID             `json:"app_id,omitempty"`
 	CreatedAt time.Time              `json:"created_at"`
 }
 
@@ -80,24 +84,26 @@ type SessionSigner struct {
 	MaxValue         *string    `json:"max_value,omitempty"` // numeric string
 	MaxTxs           *int       `json:"max_txs,omitempty"`
 	TTLExpiresAt     time.Time  `json:"ttl_expires_at"`
+	AppID            *uuid.UUID `json:"app_id,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
 	RevokedAt        *time.Time `json:"revoked_at,omitempty"`
 }
 
 // AuditLog represents an audit trail entry
 type AuditLog struct {
-	ID            int64     `json:"id"`
-	Actor         string    `json:"actor"`
-	Action        string    `json:"action"`
-	ResourceType  string    `json:"resource_type"`
-	ResourceID    string    `json:"resource_id"`
-	PolicyResult  *string   `json:"policy_result,omitempty"`
-	SignerID      *string   `json:"signer_id,omitempty"`
-	TxHash        *string   `json:"tx_hash,omitempty"`
-	RequestDigest *string   `json:"request_digest,omitempty"`
-	ClientIP      *string   `json:"client_ip,omitempty"`
-	UserAgent     *string   `json:"user_agent,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
+	ID            int64      `json:"id"`
+	Actor         string     `json:"actor"`
+	Action        string     `json:"action"`
+	ResourceType  string     `json:"resource_type"`
+	ResourceID    string     `json:"resource_id"`
+	PolicyResult  *string    `json:"policy_result,omitempty"`
+	SignerID      *string    `json:"signer_id,omitempty"`
+	TxHash        *string    `json:"tx_hash,omitempty"`
+	RequestDigest *string    `json:"request_digest,omitempty"`
+	ClientIP      *string    `json:"client_ip,omitempty"`
+	UserAgent     *string    `json:"user_agent,omitempty"`
+	AppID         *uuid.UUID `json:"app_id,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
 }
 
 // RecoveryInfo stores recovery-related information
@@ -168,6 +174,66 @@ type ConditionSet struct {
 	Description string        `json:"description,omitempty"`
 	Values      []interface{} `json:"values"` // Array of addresses, chain IDs, etc.
 	OwnerID     uuid.UUID     `json:"owner_id"`
+	AppID       *uuid.UUID    `json:"app_id,omitempty"`
 	CreatedAt   time.Time     `json:"created_at"`
 	UpdatedAt   time.Time     `json:"updated_at"`
 }
+
+// App represents a multi-tenant application
+type App struct {
+	ID          uuid.UUID   `json:"id"`
+	Name        string      `json:"name"`
+	Description string      `json:"description,omitempty"`
+	OwnerUserID uuid.UUID   `json:"owner_user_id"`
+	Status      string      `json:"status"` // active, suspended, deleted
+	Settings    AppSettings `json:"settings"`
+	CreatedAt   time.Time   `json:"created_at"`
+	UpdatedAt   time.Time   `json:"updated_at"`
+}
+
+// AppSettings contains per-app configuration
+type AppSettings struct {
+	Auth      *AppAuthSettings      `json:"auth,omitempty"`
+	RPC       *AppRPCSettings       `json:"rpc,omitempty"`
+	RateLimit *AppRateLimitSettings `json:"rate_limit,omitempty"`
+}
+
+// AppAuthSettings contains authentication configuration for an app
+type AppAuthSettings struct {
+	Kind     string `json:"kind"`      // oidc or jwt
+	Issuer   string `json:"issuer"`    // Token issuer URL
+	Audience string `json:"audience"`  // Expected audience
+	JWKSURI  string `json:"jwks_uri"`  // JWKS endpoint URL
+}
+
+// AppRPCSettings contains RPC endpoint configuration for an app
+type AppRPCSettings struct {
+	// Endpoints maps chain_id to RPC URL
+	// e.g., {"1": "https://eth.example.com", "137": "https://polygon.example.com"}
+	Endpoints map[string]string `json:"endpoints"`
+}
+
+// AppRateLimitSettings contains rate limiting configuration for an app
+type AppRateLimitSettings struct {
+	QPS int `json:"qps"` // Queries per second limit
+}
+
+// AppSecret represents an API secret for app authentication
+type AppSecret struct {
+	ID           uuid.UUID  `json:"id"`
+	AppID        uuid.UUID  `json:"app_id"`
+	SecretHash   string     `json:"-"` // Never expose in JSON
+	SecretPrefix string     `json:"secret_prefix"`
+	Status       string     `json:"status"` // active, rotated, revoked
+	LastUsedAt   *time.Time `json:"last_used_at,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	RotatedAt    *time.Time `json:"rotated_at,omitempty"`
+	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
+}
+
+// AppStatus constants
+const (
+	AppStatusActive    = "active"
+	AppStatusSuspended = "suspended"
+	AppStatusDeleted   = "deleted"
+)

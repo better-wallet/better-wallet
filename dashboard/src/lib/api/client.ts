@@ -1,16 +1,16 @@
 import type {
+  APIError,
+  AuditLog,
+  AuthorizationKey,
+  ConditionSet,
+  CreatePolicyRequest,
+  CreateWalletRequest,
+  PaginatedResponse,
+  Policy,
+  Transaction,
+  UpdatePolicyRequest,
   User,
   Wallet,
-  Policy,
-  AuthorizationKey,
-  AuditLog,
-  Transaction,
-  ConditionSet,
-  PaginatedResponse,
-  APIError,
-  CreateWalletRequest,
-  CreatePolicyRequest,
-  UpdatePolicyRequest,
 } from './types'
 
 const API_BASE_URL = process.env.BETTER_WALLET_API_URL || 'http://localhost:8080'
@@ -195,10 +195,7 @@ class BetterWalletClient {
   }
 
   // Condition Sets
-  async listConditionSets(params?: {
-    cursor?: string
-    limit?: number
-  }): Promise<PaginatedResponse<ConditionSet>> {
+  async listConditionSets(params?: { cursor?: string; limit?: number }): Promise<PaginatedResponse<ConditionSet>> {
     const searchParams = new URLSearchParams()
     if (params?.cursor) searchParams.set('cursor', params.cursor)
     if (params?.limit) searchParams.set('limit', params.limit.toString())

@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/better-wallet/better-wallet/internal/config"
 	apperrors "github.com/better-wallet/better-wallet/pkg/errors"
+	"github.com/better-wallet/better-wallet/pkg/types"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -27,26 +27,26 @@ const (
 	UserSubKey ContextKey = "user_sub"
 )
 
-// JWKSCache represents a cached JWKS
+// JWKSCache represents a cached JWKS per issuer
 type JWKSCache struct {
-	Keys      map[string]interface{}
-	ExpiresAt time.Time
+	// Map of issuer -> (kid -> public key)
+	Keys      map[string]map[string]interface{}
+	ExpiresAt map[string]time.Time
 	mu        sync.RWMutex
 }
 
-// AuthMiddleware handles JWT/OIDC authentication
+// AuthMiddleware handles JWT/OIDC authentication using per-app settings
 type AuthMiddleware struct {
-	config     *config.Config
 	jwksCache  *JWKSCache
 	httpClient *http.Client
 }
 
 // NewAuthMiddleware creates a new authentication middleware
-func NewAuthMiddleware(cfg *config.Config) *AuthMiddleware {
+func NewAuthMiddleware() *AuthMiddleware {
 	return &AuthMiddleware{
-		config: cfg,
 		jwksCache: &JWKSCache{
-			Keys: make(map[string]interface{}),
+			Keys:      make(map[string]map[string]interface{}),
+			ExpiresAt: make(map[string]time.Time),
 		},
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
@@ -55,8 +55,33 @@ func NewAuthMiddleware(cfg *config.Config) *AuthMiddleware {
 }
 
 // Authenticate is the middleware function that validates JWT tokens
+// It reads auth configuration from App.Settings (set by AppAuthMiddleware)
 func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Get app from context (set by AppAuthMiddleware)
+		app := GetApp(r.Context())
+		if app == nil {
+			m.writeError(w, apperrors.NewWithDetail(
+				apperrors.ErrCodeUnauthorized,
+				"App context not found",
+				"AppAuthMiddleware must run before AuthMiddleware",
+				http.StatusUnauthorized,
+			))
+			return
+		}
+
+		// Get auth settings from app
+		authSettings := app.Settings.Auth
+		if authSettings == nil {
+			m.writeError(w, apperrors.NewWithDetail(
+				apperrors.ErrCodeUnauthorized,
+				"Auth not configured",
+				"App does not have auth settings configured",
+				http.StatusUnauthorized,
+			))
+			return
+		}
+
 		// Extract token from Authorization header
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
@@ -79,7 +104,7 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 		tokenString := parts[1]
 
 		// Parse and validate the token
-		token, err := m.parseToken(tokenString)
+		token, err := m.parseToken(tokenString, authSettings)
 		if err != nil {
 			m.writeError(w, apperrors.NewWithDetail(
 				apperrors.ErrCodeUnauthorized,
@@ -98,22 +123,22 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 		}
 
 		// Validate issuer
-		if iss, ok := claims["iss"].(string); !ok || iss != m.config.AuthIssuer {
+		if iss, ok := claims["iss"].(string); !ok || iss != authSettings.Issuer {
 			m.writeError(w, apperrors.NewWithDetail(
 				apperrors.ErrCodeUnauthorized,
 				"Invalid issuer",
-				fmt.Sprintf("expected %s, got %s", m.config.AuthIssuer, iss),
+				fmt.Sprintf("expected %s, got %s", authSettings.Issuer, iss),
 				http.StatusUnauthorized,
 			))
 			return
 		}
 
 		// Validate audience
-		if !m.validateAudience(claims) {
+		if !m.validateAudience(claims, authSettings.Audience) {
 			m.writeError(w, apperrors.NewWithDetail(
 				apperrors.ErrCodeUnauthorized,
 				"Invalid audience",
-				fmt.Sprintf("expected %s", m.config.AuthAudience),
+				fmt.Sprintf("expected %s", authSettings.Audience),
 				http.StatusUnauthorized,
 			))
 			return
@@ -137,8 +162,8 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 	})
 }
 
-// parseToken parses and validates a JWT token
-func (m *AuthMiddleware) parseToken(tokenString string) (*jwt.Token, error) {
+// parseToken parses and validates a JWT token using app-specific settings
+func (m *AuthMiddleware) parseToken(tokenString string, authSettings *types.AppAuthSettings) (*jwt.Token, error) {
 	return jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		// Verify signing method
 		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
@@ -154,7 +179,7 @@ func (m *AuthMiddleware) parseToken(tokenString string) (*jwt.Token, error) {
 		}
 
 		// Get the public key from JWKS
-		key, err := m.getPublicKey(kid)
+		key, err := m.getPublicKey(kid, authSettings.JWKSURI)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get public key: %w", err)
 		}
@@ -163,18 +188,20 @@ func (m *AuthMiddleware) parseToken(tokenString string) (*jwt.Token, error) {
 	})
 }
 
-// getPublicKey retrieves a public key from JWKS (with caching)
-func (m *AuthMiddleware) getPublicKey(kid string) (interface{}, error) {
+// getPublicKey retrieves a public key from JWKS (with caching per issuer)
+func (m *AuthMiddleware) getPublicKey(kid, jwksURI string) (interface{}, error) {
 	// Check cache first
 	m.jwksCache.mu.RLock()
-	if key, ok := m.jwksCache.Keys[kid]; ok && time.Now().Before(m.jwksCache.ExpiresAt) {
-		m.jwksCache.mu.RUnlock()
-		return key, nil
+	if keys, ok := m.jwksCache.Keys[jwksURI]; ok {
+		if key, found := keys[kid]; found && time.Now().Before(m.jwksCache.ExpiresAt[jwksURI]) {
+			m.jwksCache.mu.RUnlock()
+			return key, nil
+		}
 	}
 	m.jwksCache.mu.RUnlock()
 
 	// Fetch JWKS
-	resp, err := m.httpClient.Get(m.config.AuthJWKSURI)
+	resp, err := m.httpClient.Get(jwksURI)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch JWKS: %w", err)
 	}
@@ -195,6 +222,10 @@ func (m *AuthMiddleware) getPublicKey(kid string) (interface{}, error) {
 	// Parse and cache keys
 	m.jwksCache.mu.Lock()
 	defer m.jwksCache.mu.Unlock()
+
+	if m.jwksCache.Keys[jwksURI] == nil {
+		m.jwksCache.Keys[jwksURI] = make(map[string]interface{})
+	}
 
 	for _, jwk := range jwks.Keys {
 		keyID, ok := jwk["kid"].(string)
@@ -224,13 +255,13 @@ func (m *AuthMiddleware) getPublicKey(kid string) (interface{}, error) {
 			continue
 		}
 
-		m.jwksCache.Keys[keyID] = publicKey
+		m.jwksCache.Keys[jwksURI][keyID] = publicKey
 	}
 
 	// Set cache expiration (1 hour)
-	m.jwksCache.ExpiresAt = time.Now().Add(1 * time.Hour)
+	m.jwksCache.ExpiresAt[jwksURI] = time.Now().Add(1 * time.Hour)
 
-	key, ok := m.jwksCache.Keys[kid]
+	key, ok := m.jwksCache.Keys[jwksURI][kid]
 	if !ok {
 		return nil, fmt.Errorf("key %s not found in JWKS", kid)
 	}
@@ -323,7 +354,7 @@ func (m *AuthMiddleware) parseECKey(jwk map[string]interface{}) (*ecdsa.PublicKe
 }
 
 // validateAudience checks if the token's audience matches the expected audience
-func (m *AuthMiddleware) validateAudience(claims jwt.MapClaims) bool {
+func (m *AuthMiddleware) validateAudience(claims jwt.MapClaims, expectedAudience string) bool {
 	aud, ok := claims["aud"]
 	if !ok {
 		return false
@@ -332,10 +363,10 @@ func (m *AuthMiddleware) validateAudience(claims jwt.MapClaims) bool {
 	// Audience can be a string or array of strings
 	switch v := aud.(type) {
 	case string:
-		return v == m.config.AuthAudience
+		return v == expectedAudience
 	case []interface{}:
 		for _, a := range v {
-			if str, ok := a.(string); ok && str == m.config.AuthAudience {
+			if str, ok := a.(string); ok && str == expectedAudience {
 				return true
 			}
 		}
@@ -358,10 +389,14 @@ func GetUserSub(ctx context.Context) (string, bool) {
 }
 
 // ValidateJWT validates a JWT token and returns the subject claim
-// This method can be called directly for validating JWTs outside of middleware
-func (m *AuthMiddleware) ValidateJWT(tokenString string) (string, error) {
+// This method requires auth settings from the app
+func (m *AuthMiddleware) ValidateJWT(tokenString string, authSettings *types.AppAuthSettings) (string, error) {
+	if authSettings == nil {
+		return "", fmt.Errorf("auth settings not configured")
+	}
+
 	// Parse and validate the token
-	token, err := m.parseToken(tokenString)
+	token, err := m.parseToken(tokenString, authSettings)
 	if err != nil {
 		return "", fmt.Errorf("invalid token: %w", err)
 	}
@@ -374,13 +409,13 @@ func (m *AuthMiddleware) ValidateJWT(tokenString string) (string, error) {
 
 	// Validate issuer
 	iss, ok := claims["iss"].(string)
-	if !ok || iss != m.config.AuthIssuer {
-		return "", fmt.Errorf("invalid issuer: expected %s, got %s", m.config.AuthIssuer, iss)
+	if !ok || iss != authSettings.Issuer {
+		return "", fmt.Errorf("invalid issuer: expected %s, got %s", authSettings.Issuer, iss)
 	}
 
 	// Validate audience
-	if !m.validateAudience(claims) {
-		return "", fmt.Errorf("invalid audience: expected %s", m.config.AuthAudience)
+	if !m.validateAudience(claims, authSettings.Audience) {
+		return "", fmt.Errorf("invalid audience: expected %s", authSettings.Audience)
 	}
 
 	// Extract subject

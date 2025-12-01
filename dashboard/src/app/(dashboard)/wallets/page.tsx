@@ -1,17 +1,12 @@
 'use client'
 
-import { Plus, Wallet, MoreHorizontal } from 'lucide-react'
+import { MoreHorizontal, Plus, Wallet } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Badge } from '@/components/ui/badge'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Skeleton } from '@/components/ui/skeleton'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { api } from '@/trpc/react'
 
 export default function WalletsPage() {
@@ -85,9 +80,7 @@ export default function WalletsPage() {
                     <TableCell>
                       <Badge variant="outline">{wallet.chain_type}</Badge>
                     </TableCell>
-                    <TableCell className="font-mono text-sm">
-                      {wallet.owner_id.slice(0, 8)}...
-                    </TableCell>
+                    <TableCell className="font-mono text-sm">{wallet.owner_id.slice(0, 8)}...</TableCell>
                     <TableCell>
                       <Badge variant={wallet.exec_backend === 'kms' ? 'default' : 'secondary'}>
                         {wallet.exec_backend.toUpperCase()}

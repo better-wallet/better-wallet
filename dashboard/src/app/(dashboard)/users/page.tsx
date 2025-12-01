@@ -1,17 +1,12 @@
 'use client'
 
-import { Search, Users, MoreHorizontal } from 'lucide-react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { MoreHorizontal, Search, Users } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { api } from '@/trpc/react'
 
 export default function UsersPage() {
@@ -78,9 +73,7 @@ export default function UsersPage() {
                   <TableRow key={user.id}>
                     <TableCell className="font-mono text-sm">{user.id.slice(0, 8)}...</TableCell>
                     <TableCell className="font-mono text-sm">
-                      {user.external_sub.length > 30
-                        ? `${user.external_sub.slice(0, 30)}...`
-                        : user.external_sub}
+                      {user.external_sub.length > 30 ? `${user.external_sub.slice(0, 30)}...` : user.external_sub}
                     </TableCell>
                     <TableCell>{formatDate(user.created_at)}</TableCell>
                     <TableCell>

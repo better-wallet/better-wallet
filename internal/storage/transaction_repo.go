@@ -26,6 +26,7 @@ type Transaction struct {
 	MaxPriorityFeePerGas *string
 	SignedTx             []byte
 	ErrorMessage         *string
+	AppID                *uuid.UUID
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
 }
@@ -46,9 +47,9 @@ func (r *TransactionRepository) Create(ctx context.Context, tx *Transaction) err
 		INSERT INTO transactions (
 			id, wallet_id, chain_id, tx_hash, status, method,
 			to_address, value, data, nonce, gas_limit,
-			max_fee_per_gas, max_priority_fee_per_gas, signed_tx, error_message
+			max_fee_per_gas, max_priority_fee_per_gas, signed_tx, error_message, app_id
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
 		)
 	`
 
@@ -68,6 +69,7 @@ func (r *TransactionRepository) Create(ctx context.Context, tx *Transaction) err
 		tx.MaxPriorityFeePerGas,
 		tx.SignedTx,
 		tx.ErrorMessage,
+		tx.AppID,
 	)
 
 	if err != nil {
@@ -83,7 +85,7 @@ func (r *TransactionRepository) GetByID(ctx context.Context, id uuid.UUID) (*Tra
 		SELECT id, wallet_id, chain_id, tx_hash, status, method,
 			to_address, value, data, nonce, gas_limit,
 			max_fee_per_gas, max_priority_fee_per_gas, signed_tx, error_message,
-			created_at, updated_at
+			app_id, created_at, updated_at
 		FROM transactions
 		WHERE id = $1
 	`
@@ -105,6 +107,50 @@ func (r *TransactionRepository) GetByID(ctx context.Context, id uuid.UUID) (*Tra
 		&tx.MaxPriorityFeePerGas,
 		&tx.SignedTx,
 		&tx.ErrorMessage,
+		&tx.AppID,
+		&tx.CreatedAt,
+		&tx.UpdatedAt,
+	)
+
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get transaction: %w", err)
+	}
+
+	return &tx, nil
+}
+
+// GetByIDAndAppID retrieves a transaction by ID scoped to an app
+func (r *TransactionRepository) GetByIDAndAppID(ctx context.Context, id, appID uuid.UUID) (*Transaction, error) {
+	query := `
+		SELECT id, wallet_id, chain_id, tx_hash, status, method,
+			to_address, value, data, nonce, gas_limit,
+			max_fee_per_gas, max_priority_fee_per_gas, signed_tx, error_message,
+			app_id, created_at, updated_at
+		FROM transactions
+		WHERE id = $1 AND app_id = $2
+	`
+
+	var tx Transaction
+	err := r.store.pool.QueryRow(ctx, query, id, appID).Scan(
+		&tx.ID,
+		&tx.WalletID,
+		&tx.ChainID,
+		&tx.TxHash,
+		&tx.Status,
+		&tx.Method,
+		&tx.ToAddress,
+		&tx.Value,
+		&tx.Data,
+		&tx.Nonce,
+		&tx.GasLimit,
+		&tx.MaxFeePerGas,
+		&tx.MaxPriorityFeePerGas,
+		&tx.SignedTx,
+		&tx.ErrorMessage,
+		&tx.AppID,
 		&tx.CreatedAt,
 		&tx.UpdatedAt,
 	)
@@ -125,7 +171,7 @@ func (r *TransactionRepository) GetByTxHash(ctx context.Context, txHash string) 
 		SELECT id, wallet_id, chain_id, tx_hash, status, method,
 			to_address, value, data, nonce, gas_limit,
 			max_fee_per_gas, max_priority_fee_per_gas, signed_tx, error_message,
-			created_at, updated_at
+			app_id, created_at, updated_at
 		FROM transactions
 		WHERE tx_hash = $1
 	`
@@ -147,6 +193,7 @@ func (r *TransactionRepository) GetByTxHash(ctx context.Context, txHash string) 
 		&tx.MaxPriorityFeePerGas,
 		&tx.SignedTx,
 		&tx.ErrorMessage,
+		&tx.AppID,
 		&tx.CreatedAt,
 		&tx.UpdatedAt,
 	)
@@ -171,7 +218,7 @@ func (r *TransactionRepository) ListByWalletID(ctx context.Context, walletID uui
 		SELECT id, wallet_id, chain_id, tx_hash, status, method,
 			to_address, value, data, nonce, gas_limit,
 			max_fee_per_gas, max_priority_fee_per_gas, signed_tx, error_message,
-			created_at, updated_at
+			app_id, created_at, updated_at
 		FROM transactions
 		WHERE wallet_id = $1
 		ORDER BY created_at DESC
@@ -203,6 +250,7 @@ func (r *TransactionRepository) ListByWalletID(ctx context.Context, walletID uui
 			&tx.MaxPriorityFeePerGas,
 			&tx.SignedTx,
 			&tx.ErrorMessage,
+			&tx.AppID,
 			&tx.CreatedAt,
 			&tx.UpdatedAt,
 		); err != nil {
@@ -224,7 +272,7 @@ func (r *TransactionRepository) ListByWalletIDs(ctx context.Context, walletIDs [
 		SELECT id, wallet_id, chain_id, tx_hash, status, method,
 			to_address, value, data, nonce, gas_limit,
 			max_fee_per_gas, max_priority_fee_per_gas, signed_tx, error_message,
-			created_at, updated_at
+			app_id, created_at, updated_at
 		FROM transactions
 		WHERE wallet_id = ANY($1)
 		ORDER BY created_at DESC
@@ -256,6 +304,61 @@ func (r *TransactionRepository) ListByWalletIDs(ctx context.Context, walletIDs [
 			&tx.MaxPriorityFeePerGas,
 			&tx.SignedTx,
 			&tx.ErrorMessage,
+			&tx.AppID,
+			&tx.CreatedAt,
+			&tx.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan transaction: %w", err)
+		}
+		transactions = append(transactions, &tx)
+	}
+
+	return transactions, nil
+}
+
+// GetByAppID retrieves all transactions for an app
+func (r *TransactionRepository) GetByAppID(ctx context.Context, appID uuid.UUID, limit int) ([]*Transaction, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	query := `
+		SELECT id, wallet_id, chain_id, tx_hash, status, method,
+			to_address, value, data, nonce, gas_limit,
+			max_fee_per_gas, max_priority_fee_per_gas, signed_tx, error_message,
+			app_id, created_at, updated_at
+		FROM transactions
+		WHERE app_id = $1
+		ORDER BY created_at DESC
+		LIMIT $2
+	`
+
+	rows, err := r.store.pool.Query(ctx, query, appID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get transactions by app ID: %w", err)
+	}
+	defer rows.Close()
+
+	var transactions []*Transaction
+	for rows.Next() {
+		var tx Transaction
+		if err := rows.Scan(
+			&tx.ID,
+			&tx.WalletID,
+			&tx.ChainID,
+			&tx.TxHash,
+			&tx.Status,
+			&tx.Method,
+			&tx.ToAddress,
+			&tx.Value,
+			&tx.Data,
+			&tx.Nonce,
+			&tx.GasLimit,
+			&tx.MaxFeePerGas,
+			&tx.MaxPriorityFeePerGas,
+			&tx.SignedTx,
+			&tx.ErrorMessage,
+			&tx.AppID,
 			&tx.CreatedAt,
 			&tx.UpdatedAt,
 		); err != nil {

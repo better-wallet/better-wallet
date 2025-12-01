@@ -28,8 +28,8 @@ func (r *PolicyRepository) Create(ctx context.Context, policy *types.Policy) err
 	}
 
 	query := `
-		INSERT INTO policies (id, name, chain_type, version, rules, owner_id)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO policies (id, name, chain_type, version, rules, owner_id, app_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING created_at
 	`
 
@@ -40,6 +40,7 @@ func (r *PolicyRepository) Create(ctx context.Context, policy *types.Policy) err
 		policy.Version,
 		rulesJSON,
 		policy.OwnerID,
+		policy.AppID,
 	).Scan(&policy.CreatedAt)
 
 	if err != nil {
@@ -52,7 +53,7 @@ func (r *PolicyRepository) Create(ctx context.Context, policy *types.Policy) err
 // GetByID retrieves a policy by ID
 func (r *PolicyRepository) GetByID(ctx context.Context, id uuid.UUID) (*types.Policy, error) {
 	query := `
-		SELECT id, name, chain_type, version, rules, owner_id, created_at
+		SELECT id, name, chain_type, version, rules, owner_id, app_id, created_at
 		FROM policies
 		WHERE id = $1
 	`
@@ -67,6 +68,42 @@ func (r *PolicyRepository) GetByID(ctx context.Context, id uuid.UUID) (*types.Po
 		&policy.Version,
 		&rulesJSON,
 		&policy.OwnerID,
+		&policy.AppID,
+		&policy.CreatedAt,
+	)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get policy by ID: %w", err)
+	}
+
+	if err := json.Unmarshal(rulesJSON, &policy.Rules); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal rules: %w", err)
+	}
+
+	return &policy, nil
+}
+
+// GetByIDAndAppID retrieves a policy by ID scoped to an app
+func (r *PolicyRepository) GetByIDAndAppID(ctx context.Context, id, appID uuid.UUID) (*types.Policy, error) {
+	query := `
+		SELECT id, name, chain_type, version, rules, owner_id, app_id, created_at
+		FROM policies
+		WHERE id = $1 AND app_id = $2
+	`
+
+	var policy types.Policy
+	var rulesJSON []byte
+
+	err := r.store.pool.QueryRow(ctx, query, id, appID).Scan(
+		&policy.ID,
+		&policy.Name,
+		&policy.ChainType,
+		&policy.Version,
+		&rulesJSON,
+		&policy.OwnerID,
+		&policy.AppID,
 		&policy.CreatedAt,
 	)
 	if err == pgx.ErrNoRows {
@@ -86,7 +123,7 @@ func (r *PolicyRepository) GetByID(ctx context.Context, id uuid.UUID) (*types.Po
 // GetByWalletID retrieves all policies associated with a wallet
 func (r *PolicyRepository) GetByWalletID(ctx context.Context, walletID uuid.UUID) ([]*types.Policy, error) {
 	query := `
-		SELECT p.id, p.name, p.chain_type, p.version, p.rules, p.owner_id, p.created_at
+		SELECT p.id, p.name, p.chain_type, p.version, p.rules, p.owner_id, p.app_id, p.created_at
 		FROM policies p
 		INNER JOIN wallet_policies wp ON p.id = wp.policy_id
 		WHERE wp.wallet_id = $1
@@ -110,6 +147,51 @@ func (r *PolicyRepository) GetByWalletID(ctx context.Context, walletID uuid.UUID
 			&policy.Version,
 			&rulesJSON,
 			&policy.OwnerID,
+			&policy.AppID,
+			&policy.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan policy: %w", err)
+		}
+
+		if err := json.Unmarshal(rulesJSON, &policy.Rules); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal rules: %w", err)
+		}
+
+		policies = append(policies, &policy)
+	}
+
+	return policies, nil
+}
+
+// GetByAppID retrieves all policies for an app
+func (r *PolicyRepository) GetByAppID(ctx context.Context, appID uuid.UUID) ([]*types.Policy, error) {
+	query := `
+		SELECT id, name, chain_type, version, rules, owner_id, app_id, created_at
+		FROM policies
+		WHERE app_id = $1
+		ORDER BY created_at DESC
+	`
+
+	rows, err := r.store.pool.Query(ctx, query, appID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get policies by app ID: %w", err)
+	}
+	defer rows.Close()
+
+	var policies []*types.Policy
+	for rows.Next() {
+		var policy types.Policy
+		var rulesJSON []byte
+
+		err := rows.Scan(
+			&policy.ID,
+			&policy.Name,
+			&policy.ChainType,
+			&policy.Version,
+			&rulesJSON,
+			&policy.OwnerID,
+			&policy.AppID,
 			&policy.CreatedAt,
 		)
 		if err != nil {

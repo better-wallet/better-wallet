@@ -1,14 +1,14 @@
 'use client'
 
-import { useState } from 'react'
+import { Wallet } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Wallet } from 'lucide-react'
+import { useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
-import { signUp, signIn } from '@/lib/auth/client'
+import { signIn, signUp } from '@/lib/auth/client'
 
 export default function SignupPage() {
   const router = useRouter()
@@ -66,9 +66,7 @@ export default function SignupPage() {
           <span className="font-bold text-2xl">Better Wallet</span>
         </div>
         <CardTitle className="text-2xl text-center">Create an account</CardTitle>
-        <CardDescription className="text-center">
-          Enter your details to create your account
-        </CardDescription>
+        <CardDescription className="text-center">Enter your details to create your account</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid grid-cols-2 gap-4">

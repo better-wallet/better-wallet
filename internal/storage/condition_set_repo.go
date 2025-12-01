@@ -28,8 +28,8 @@ func (r *ConditionSetRepository) Create(ctx context.Context, cs *types.Condition
 	}
 
 	query := `
-		INSERT INTO condition_sets (id, name, description, values, owner_id)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO condition_sets (id, name, description, values, owner_id, app_id)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING created_at, updated_at
 	`
 
@@ -39,6 +39,7 @@ func (r *ConditionSetRepository) Create(ctx context.Context, cs *types.Condition
 		cs.Description,
 		valuesJSON,
 		cs.OwnerID,
+		cs.AppID,
 	).Scan(&cs.CreatedAt, &cs.UpdatedAt)
 
 	if err != nil {
@@ -51,7 +52,7 @@ func (r *ConditionSetRepository) Create(ctx context.Context, cs *types.Condition
 // GetByID retrieves a condition set by ID
 func (r *ConditionSetRepository) GetByID(ctx context.Context, id uuid.UUID) (*types.ConditionSet, error) {
 	query := `
-		SELECT id, name, description, values, owner_id, created_at, updated_at
+		SELECT id, name, description, values, owner_id, app_id, created_at, updated_at
 		FROM condition_sets
 		WHERE id = $1
 	`
@@ -66,6 +67,47 @@ func (r *ConditionSetRepository) GetByID(ctx context.Context, id uuid.UUID) (*ty
 		&description,
 		&valuesJSON,
 		&cs.OwnerID,
+		&cs.AppID,
+		&cs.CreatedAt,
+		&cs.UpdatedAt,
+	)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get condition set by ID: %w", err)
+	}
+
+	if description != nil {
+		cs.Description = *description
+	}
+
+	if err := json.Unmarshal(valuesJSON, &cs.Values); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal values: %w", err)
+	}
+
+	return &cs, nil
+}
+
+// GetByIDAndAppID retrieves a condition set by ID scoped to an app
+func (r *ConditionSetRepository) GetByIDAndAppID(ctx context.Context, id, appID uuid.UUID) (*types.ConditionSet, error) {
+	query := `
+		SELECT id, name, description, values, owner_id, app_id, created_at, updated_at
+		FROM condition_sets
+		WHERE id = $1 AND app_id = $2
+	`
+
+	var cs types.ConditionSet
+	var valuesJSON []byte
+	var description *string
+
+	err := r.store.pool.QueryRow(ctx, query, id, appID).Scan(
+		&cs.ID,
+		&cs.Name,
+		&description,
+		&valuesJSON,
+		&cs.OwnerID,
+		&cs.AppID,
 		&cs.CreatedAt,
 		&cs.UpdatedAt,
 	)
@@ -94,7 +136,7 @@ func (r *ConditionSetRepository) GetByOwnerIDs(ctx context.Context, ownerIDs []u
 	}
 
 	query := `
-		SELECT id, name, description, values, owner_id, created_at, updated_at
+		SELECT id, name, description, values, owner_id, app_id, created_at, updated_at
 		FROM condition_sets
 		WHERE owner_id = ANY($1)
 		ORDER BY created_at DESC
@@ -118,6 +160,56 @@ func (r *ConditionSetRepository) GetByOwnerIDs(ctx context.Context, ownerIDs []u
 			&description,
 			&valuesJSON,
 			&cs.OwnerID,
+			&cs.AppID,
+			&cs.CreatedAt,
+			&cs.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan condition set: %w", err)
+		}
+
+		if description != nil {
+			cs.Description = *description
+		}
+
+		if err := json.Unmarshal(valuesJSON, &cs.Values); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal values: %w", err)
+		}
+
+		sets = append(sets, &cs)
+	}
+
+	return sets, nil
+}
+
+// GetByAppID retrieves all condition sets for an app
+func (r *ConditionSetRepository) GetByAppID(ctx context.Context, appID uuid.UUID) ([]*types.ConditionSet, error) {
+	query := `
+		SELECT id, name, description, values, owner_id, app_id, created_at, updated_at
+		FROM condition_sets
+		WHERE app_id = $1
+		ORDER BY created_at DESC
+	`
+
+	rows, err := r.store.pool.Query(ctx, query, appID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get condition sets by app ID: %w", err)
+	}
+	defer rows.Close()
+
+	var sets []*types.ConditionSet
+	for rows.Next() {
+		var cs types.ConditionSet
+		var valuesJSON []byte
+		var description *string
+
+		err := rows.Scan(
+			&cs.ID,
+			&cs.Name,
+			&description,
+			&valuesJSON,
+			&cs.OwnerID,
+			&cs.AppID,
 			&cs.CreatedAt,
 			&cs.UpdatedAt,
 		)

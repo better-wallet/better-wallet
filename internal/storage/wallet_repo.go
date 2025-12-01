@@ -10,6 +10,7 @@ import (
 )
 
 // WalletRepository handles wallet data operations
+// All operations are automatically scoped to the app_id from context
 type WalletRepository struct {
 	store *Store
 }
@@ -20,6 +21,7 @@ func NewWalletRepository(store *Store) *WalletRepository {
 }
 
 // Create creates a new wallet
+// The wallet's AppID field must be set before calling this
 func (r *WalletRepository) Create(ctx context.Context, wallet *types.Wallet) error {
 	return r.CreateTx(ctx, r.store.pool, wallet)
 }
@@ -27,8 +29,8 @@ func (r *WalletRepository) Create(ctx context.Context, wallet *types.Wallet) err
 // CreateTx creates a new wallet using the provided transaction or connection
 func (r *WalletRepository) CreateTx(ctx context.Context, db DBTX, wallet *types.Wallet) error {
 	query := `
-		INSERT INTO wallets (id, user_id, chain_type, owner_id, exec_backend, address)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO wallets (id, user_id, chain_type, owner_id, exec_backend, address, app_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING created_at
 	`
 
@@ -39,6 +41,7 @@ func (r *WalletRepository) CreateTx(ctx context.Context, db DBTX, wallet *types.
 		wallet.OwnerID,
 		wallet.ExecBackend,
 		wallet.Address,
+		wallet.AppID,
 	).Scan(&wallet.CreatedAt)
 
 	if err != nil {
@@ -48,22 +51,28 @@ func (r *WalletRepository) CreateTx(ctx context.Context, db DBTX, wallet *types.
 	return nil
 }
 
-// GetByID retrieves a wallet by ID
+// GetByID retrieves a wallet by ID, automatically scoped to app_id from context
 func (r *WalletRepository) GetByID(ctx context.Context, id uuid.UUID) (*types.Wallet, error) {
+	appID, err := RequireAppID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	query := `
-		SELECT id, user_id, chain_type, owner_id, exec_backend, address, created_at
+		SELECT id, user_id, chain_type, owner_id, exec_backend, address, app_id, created_at
 		FROM wallets
-		WHERE id = $1
+		WHERE id = $1 AND app_id = $2
 	`
 
 	var wallet types.Wallet
-	err := r.store.pool.QueryRow(ctx, query, id).Scan(
+	err = r.store.pool.QueryRow(ctx, query, id, appID).Scan(
 		&wallet.ID,
 		&wallet.UserID,
 		&wallet.ChainType,
 		&wallet.OwnerID,
 		&wallet.ExecBackend,
 		&wallet.Address,
+		&wallet.AppID,
 		&wallet.CreatedAt,
 	)
 	if err == pgx.ErrNoRows {
@@ -76,16 +85,21 @@ func (r *WalletRepository) GetByID(ctx context.Context, id uuid.UUID) (*types.Wa
 	return &wallet, nil
 }
 
-// GetByUserID retrieves all wallets for a user
+// GetByUserID retrieves all wallets for a user, automatically scoped to app_id from context
 func (r *WalletRepository) GetByUserID(ctx context.Context, userID uuid.UUID) ([]*types.Wallet, error) {
+	appID, err := RequireAppID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	query := `
-		SELECT id, user_id, chain_type, owner_id, exec_backend, address, created_at
+		SELECT id, user_id, chain_type, owner_id, exec_backend, address, app_id, created_at
 		FROM wallets
-		WHERE user_id = $1
+		WHERE user_id = $1 AND app_id = $2
 		ORDER BY created_at DESC
 	`
 
-	rows, err := r.store.pool.Query(ctx, query, userID)
+	rows, err := r.store.pool.Query(ctx, query, userID, appID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get wallets by user ID: %w", err)
 	}
@@ -101,6 +115,7 @@ func (r *WalletRepository) GetByUserID(ctx context.Context, userID uuid.UUID) ([
 			&wallet.OwnerID,
 			&wallet.ExecBackend,
 			&wallet.Address,
+			&wallet.AppID,
 			&wallet.CreatedAt,
 		)
 		if err != nil {
@@ -112,22 +127,28 @@ func (r *WalletRepository) GetByUserID(ctx context.Context, userID uuid.UUID) ([
 	return wallets, nil
 }
 
-// GetByAddress retrieves a wallet by address
+// GetByAddress retrieves a wallet by address, automatically scoped to app_id from context
 func (r *WalletRepository) GetByAddress(ctx context.Context, address string) (*types.Wallet, error) {
+	appID, err := RequireAppID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	query := `
-		SELECT id, user_id, chain_type, owner_id, exec_backend, address, created_at
+		SELECT id, user_id, chain_type, owner_id, exec_backend, address, app_id, created_at
 		FROM wallets
-		WHERE address = $1
+		WHERE address = $1 AND app_id = $2
 	`
 
 	var wallet types.Wallet
-	err := r.store.pool.QueryRow(ctx, query, address).Scan(
+	err = r.store.pool.QueryRow(ctx, query, address, appID).Scan(
 		&wallet.ID,
 		&wallet.UserID,
 		&wallet.ChainType,
 		&wallet.OwnerID,
 		&wallet.ExecBackend,
 		&wallet.Address,
+		&wallet.AppID,
 		&wallet.CreatedAt,
 	)
 	if err == pgx.ErrNoRows {
@@ -140,11 +161,16 @@ func (r *WalletRepository) GetByAddress(ctx context.Context, address string) (*t
 	return &wallet, nil
 }
 
-// Delete deletes a wallet by ID
+// Delete deletes a wallet by ID, automatically scoped to app_id from context
 func (r *WalletRepository) Delete(ctx context.Context, id uuid.UUID) error {
-	query := `DELETE FROM wallets WHERE id = $1`
+	appID, err := RequireAppID(ctx)
+	if err != nil {
+		return err
+	}
 
-	tag, err := r.store.pool.Exec(ctx, query, id)
+	query := `DELETE FROM wallets WHERE id = $1 AND app_id = $2`
+
+	tag, err := r.store.pool.Exec(ctx, query, id, appID)
 	if err != nil {
 		return fmt.Errorf("failed to delete wallet: %w", err)
 	}
@@ -154,4 +180,63 @@ func (r *WalletRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	}
 
 	return nil
+}
+
+// List retrieves wallets with pagination, automatically scoped to app_id from context
+func (r *WalletRepository) List(ctx context.Context, userID uuid.UUID, chainType string, cursor *string, limit int) ([]*types.Wallet, error) {
+	appID, err := RequireAppID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	query := `
+		SELECT id, user_id, chain_type, owner_id, exec_backend, address, app_id, created_at
+		FROM wallets
+		WHERE user_id = $1 AND app_id = $2
+	`
+	args := []interface{}{userID, appID}
+	argPos := 3
+
+	if chainType != "" {
+		query += fmt.Sprintf(" AND chain_type = $%d", argPos)
+		args = append(args, chainType)
+		argPos++
+	}
+
+	if cursor != nil && *cursor != "" {
+		query += fmt.Sprintf(" AND created_at < $%d", argPos)
+		args = append(args, *cursor)
+		argPos++
+	}
+
+	query += " ORDER BY created_at DESC"
+	query += fmt.Sprintf(" LIMIT $%d", argPos)
+	args = append(args, limit+1) // Fetch one extra to check for next page
+
+	rows, err := r.store.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list wallets: %w", err)
+	}
+	defer rows.Close()
+
+	var wallets []*types.Wallet
+	for rows.Next() {
+		var wallet types.Wallet
+		err := rows.Scan(
+			&wallet.ID,
+			&wallet.UserID,
+			&wallet.ChainType,
+			&wallet.OwnerID,
+			&wallet.ExecBackend,
+			&wallet.Address,
+			&wallet.AppID,
+			&wallet.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan wallet: %w", err)
+		}
+		wallets = append(wallets, &wallet)
+	}
+
+	return wallets, nil
 }

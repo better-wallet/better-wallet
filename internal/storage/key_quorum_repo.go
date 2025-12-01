@@ -22,8 +22,8 @@ func NewKeyQuorumRepository(store *Store) *KeyQuorumRepository {
 // Create creates a new key quorum
 func (r *KeyQuorumRepository) Create(ctx context.Context, kq *types.KeyQuorum) error {
 	query := `
-		INSERT INTO key_quorums (id, threshold, key_ids, status, created_at)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO key_quorums (id, threshold, key_ids, status, app_id, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
 	`
 	_, err := r.store.pool.Exec(
 		ctx,
@@ -32,6 +32,7 @@ func (r *KeyQuorumRepository) Create(ctx context.Context, kq *types.KeyQuorum) e
 		kq.Threshold,
 		kq.KeyIDs,
 		kq.Status,
+		kq.AppID,
 		kq.CreatedAt,
 	)
 	if err != nil {
@@ -43,7 +44,7 @@ func (r *KeyQuorumRepository) Create(ctx context.Context, kq *types.KeyQuorum) e
 // GetByID retrieves a key quorum by ID
 func (r *KeyQuorumRepository) GetByID(ctx context.Context, id uuid.UUID) (*types.KeyQuorum, error) {
 	query := `
-		SELECT id, threshold, key_ids, status, created_at
+		SELECT id, threshold, key_ids, status, app_id, created_at
 		FROM key_quorums
 		WHERE id = $1
 	`
@@ -54,6 +55,7 @@ func (r *KeyQuorumRepository) GetByID(ctx context.Context, id uuid.UUID) (*types
 		&kq.Threshold,
 		&kq.KeyIDs,
 		&kq.Status,
+		&kq.AppID,
 		&kq.CreatedAt,
 	)
 	if err == pgx.ErrNoRows {
@@ -63,6 +65,67 @@ func (r *KeyQuorumRepository) GetByID(ctx context.Context, id uuid.UUID) (*types
 		return nil, fmt.Errorf("failed to get key quorum: %w", err)
 	}
 	return &kq, nil
+}
+
+// GetByIDAndAppID retrieves a key quorum by ID scoped to an app
+func (r *KeyQuorumRepository) GetByIDAndAppID(ctx context.Context, id, appID uuid.UUID) (*types.KeyQuorum, error) {
+	query := `
+		SELECT id, threshold, key_ids, status, app_id, created_at
+		FROM key_quorums
+		WHERE id = $1 AND app_id = $2
+	`
+
+	var kq types.KeyQuorum
+	err := r.store.pool.QueryRow(ctx, query, id, appID).Scan(
+		&kq.ID,
+		&kq.Threshold,
+		&kq.KeyIDs,
+		&kq.Status,
+		&kq.AppID,
+		&kq.CreatedAt,
+	)
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get key quorum: %w", err)
+	}
+	return &kq, nil
+}
+
+// GetByAppID retrieves all key quorums for an app
+func (r *KeyQuorumRepository) GetByAppID(ctx context.Context, appID uuid.UUID) ([]*types.KeyQuorum, error) {
+	query := `
+		SELECT id, threshold, key_ids, status, app_id, created_at
+		FROM key_quorums
+		WHERE app_id = $1
+		ORDER BY created_at DESC
+	`
+
+	rows, err := r.store.pool.Query(ctx, query, appID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get key quorums by app ID: %w", err)
+	}
+	defer rows.Close()
+
+	var quorums []*types.KeyQuorum
+	for rows.Next() {
+		var kq types.KeyQuorum
+		err := rows.Scan(
+			&kq.ID,
+			&kq.Threshold,
+			&kq.KeyIDs,
+			&kq.Status,
+			&kq.AppID,
+			&kq.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan key quorum: %w", err)
+		}
+		quorums = append(quorums, &kq)
+	}
+
+	return quorums, nil
 }
 
 // Update updates a key quorum

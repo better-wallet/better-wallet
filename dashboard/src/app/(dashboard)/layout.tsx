@@ -1,8 +1,8 @@
 import { redirect } from 'next/navigation'
 import { AppSidebar } from '@/components/layout/app-sidebar'
+import { UserNav } from '@/components/layout/user-nav'
 import { Separator } from '@/components/ui/separator'
 import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
-import { UserNav } from '@/components/layout/user-nav'
 import { getSession } from '@/lib/auth/server'
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {

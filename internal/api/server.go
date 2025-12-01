@@ -50,8 +50,7 @@ func (s *Server) Start() error {
 	// Health check endpoint (no auth required)
 	mux.HandleFunc("/health", s.handleHealth)
 
-	// API v1 routes (with app-level + user-level authentication; owner signatures verified in handler)
-	// Chain: App Auth -> User Auth -> Handler
+	// API v1 routes
 	mux.Handle("/v1/wallets",
 		s.appAuthMiddleware.Authenticate(
 			s.userAuthMiddleware.Authenticate(http.HandlerFunc(s.handleWallets))))

@@ -63,6 +63,7 @@ func (s *Server) handleCreateSessionSigner(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Create session signer (app-scoped by context automatically)
 	ss, authKey, err := s.walletService.CreateSessionSigner(r.Context(), &app.CreateSessionSignerRequest{
 		UserSub:          userSub,
 		WalletID:         walletID,

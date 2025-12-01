@@ -115,9 +115,7 @@ export default function OverviewPage() {
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-sm">Execution Backend</span>
-                  <span
-                    className={`text-sm ${health?.executionBackend ? 'text-green-500' : 'text-red-500'}`}
-                  >
+                  <span className={`text-sm ${health?.executionBackend ? 'text-green-500' : 'text-red-500'}`}>
                     {health?.executionBackend ? 'Ready' : 'Not Ready'}
                   </span>
                 </div>

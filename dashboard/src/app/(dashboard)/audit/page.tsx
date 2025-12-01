@@ -1,18 +1,11 @@
 'use client'
 
-import { FileText, Filter, Download } from 'lucide-react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
+import { Download, FileText, Filter } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { api } from '@/trpc/react'
 
 export default function AuditPage() {
@@ -102,22 +95,16 @@ export default function AuditPage() {
                     </TableCell>
                     <TableCell>
                       <span className="text-muted-foreground">{log.resource_type}:</span>{' '}
-                      <span className="font-mono text-sm">
-                        {log.resource_id.slice(0, 8)}...
-                      </span>
+                      <span className="font-mono text-sm">{log.resource_id.slice(0, 8)}...</span>
                     </TableCell>
                     <TableCell>
                       {log.policy_result && (
-                        <Badge
-                          variant={log.policy_result === 'ALLOW' ? 'default' : 'destructive'}
-                        >
+                        <Badge variant={log.policy_result === 'ALLOW' ? 'default' : 'destructive'}>
                           {log.policy_result}
                         </Badge>
                       )}
                     </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {log.client_ip || '-'}
-                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{log.client_ip || '-'}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

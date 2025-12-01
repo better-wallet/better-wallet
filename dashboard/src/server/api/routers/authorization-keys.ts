@@ -1,6 +1,6 @@
 import { z } from 'zod'
-import { createTRPCRouter, protectedProcedure } from '../trpc'
 import { apiClient } from '@/lib/api/client'
+import { createTRPCRouter, protectedProcedure } from '../trpc'
 
 export const authorizationKeysRouter = createTRPCRouter({
   list: protectedProcedure

@@ -57,8 +57,8 @@ func main() {
 	walletService := app.NewWalletService(store, keyExec, policyEngine)
 
 	// Initialize middleware
-	appAuthMiddleware := middleware.NewAppAuthMiddleware(cfg)
-	userAuthMiddleware := middleware.NewAuthMiddleware(cfg)
+	appAuthMiddleware := middleware.NewAppAuthMiddleware(store)
+	userAuthMiddleware := middleware.NewAuthMiddleware()
 	idempotencyRepo := storage.NewIdempotencyRepo(store)
 	idempotencyMiddleware := middleware.NewIdempotencyMiddleware(idempotencyRepo)
 

@@ -111,7 +111,7 @@ func (s *Server) handleGetTransaction(w http.ResponseWriter, r *http.Request, tx
 		return
 	}
 
-	// Verify user has access to this transaction's wallet
+	// Verify user has access to this transaction's wallet (app-scoped by context automatically)
 	wallet, err := s.walletService.GetWallet(r.Context(), tx.WalletID, userSub)
 	if err != nil || wallet == nil {
 		s.writeError(w, apperrors.ErrForbidden)
@@ -160,7 +160,7 @@ func (s *Server) handleListTransactions(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 
-		// Verify user owns the wallet
+		// Verify user owns the wallet (app-scoped by context automatically)
 		wallet, err := s.walletService.GetWallet(r.Context(), walletID, userSub)
 		if err != nil || wallet == nil {
 			s.writeError(w, apperrors.ErrForbidden)
@@ -169,7 +169,7 @@ func (s *Server) handleListTransactions(w http.ResponseWriter, r *http.Request) 
 
 		transactions, err = txRepo.ListByWalletID(r.Context(), walletID, limit)
 	} else {
-		// List all transactions for user's wallets
+		// List all transactions for user's wallets (app-scoped by context automatically)
 		wallets, _, err := s.walletService.ListWallets(r.Context(), &app.ListWalletsRequest{
 			UserSub: userSub,
 			Limit:   1000, // Get all wallets for the user

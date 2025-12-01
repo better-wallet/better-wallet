@@ -102,6 +102,9 @@ type AdditionalSigner struct {
 
 // CreateWallet creates a new wallet for a user
 func (s *WalletService) CreateWallet(ctx context.Context, req *CreateWalletRequest) (*types.Wallet, error) {
+	// Get AppID from context for multi-tenant isolation
+	appID, _ := storage.GetAppID(ctx)
+
 	// Get or create user
 	user, err := s.userRepo.GetOrCreate(ctx, req.UserSub)
 	if err != nil {
@@ -181,6 +184,7 @@ func (s *WalletService) CreateWallet(ctx context.Context, req *CreateWalletReque
 			Algorithm:   req.OwnerAlgorithm,
 			OwnerEntity: req.UserSub,
 			Status:      types.StatusActive,
+			AppID:       &appID,
 		}
 		ownerID = authKey.ID
 	} else {
@@ -212,6 +216,7 @@ func (s *WalletService) CreateWallet(ctx context.Context, req *CreateWalletReque
 		OwnerID:     ownerID,
 		ExecBackend: req.ExecBackend,
 		Address:     keyMaterial.Address,
+		AppID:       &appID,
 	}
 
 	// Begin transaction
@@ -270,6 +275,7 @@ func (s *WalletService) CreateWallet(ctx context.Context, req *CreateWalletReque
 				WalletID:     wallet.ID,
 				SignerID:     signer.SignerID.String(),
 				TTLExpiresAt: time.Now().Add(24 * time.Hour), // Default 24h
+				AppID:        &appID,
 			}
 
 			if len(signer.OverridePolicyIDs) > 0 {
@@ -368,7 +374,7 @@ func (s *WalletService) SignTransaction(ctx context.Context, userSub string, req
 		)
 	}
 
-	// Get wallet
+	// Get wallet (app_id scope is automatically enforced by repository)
 	wallet, err := s.walletRepo.GetByID(ctx, req.WalletID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get wallet: %w", err)
@@ -597,7 +603,7 @@ func (s *WalletService) GetWallets(ctx context.Context, userSub string) ([]*type
 
 // CreateSessionSigner adds a session signer (authorization key) to a wallet
 func (s *WalletService) CreateSessionSigner(ctx context.Context, req *CreateSessionSignerRequest) (*types.SessionSigner, *types.AuthorizationKey, error) {
-	// Verify wallet ownership
+	// Verify wallet ownership (app_id scope is automatically enforced by repository)
 	wallet, err := s.walletRepo.GetByID(ctx, req.WalletID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get wallet: %w", err)
@@ -654,6 +660,9 @@ func (s *WalletService) CreateSessionSigner(ctx context.Context, req *CreateSess
 		maxValueStr = &mv
 	}
 
+	// Get AppID from context for multi-tenant isolation
+	appID, _ := storage.GetAppID(ctx)
+
 	// Transactional creation of auth key + session signer
 	tx, err := s.store.DB().Begin(ctx)
 	if err != nil {
@@ -667,6 +676,7 @@ func (s *WalletService) CreateSessionSigner(ctx context.Context, req *CreateSess
 		Algorithm:   types.AlgorithmP256,
 		OwnerEntity: req.UserSub,
 		Status:      types.StatusActive,
+		AppID:       &appID,
 	}
 	if err := s.authKeyRepo.CreateTx(ctx, tx, authKey); err != nil {
 		return nil, nil, err
@@ -681,6 +691,7 @@ func (s *WalletService) CreateSessionSigner(ctx context.Context, req *CreateSess
 		MaxValue:        maxValueStr,
 		MaxTxs:          req.MaxTxs,
 		TTLExpiresAt:    time.Now().Add(req.TTL),
+		AppID:           &appID,
 	}
 	if err := s.sessionRepo.CreateTx(ctx, tx, ss); err != nil {
 		return nil, nil, err
@@ -695,6 +706,7 @@ func (s *WalletService) CreateSessionSigner(ctx context.Context, req *CreateSess
 
 // ListSessionSigners lists session signers for a wallet (including revoked/expired)
 func (s *WalletService) ListSessionSigners(ctx context.Context, userSub string, walletID uuid.UUID) ([]SessionSignerWithKey, error) {
+	// App-scoped access is automatically enforced by repository
 	wallet, err := s.walletRepo.GetByID(ctx, walletID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get wallet: %w", err)
@@ -733,6 +745,7 @@ func (s *WalletService) ListSessionSigners(ctx context.Context, userSub string, 
 
 // DeleteSessionSigner revokes a session signer and its authorization key
 func (s *WalletService) DeleteSessionSigner(ctx context.Context, userSub string, walletID, signerID uuid.UUID) error {
+	// App-scoped access is automatically enforced by repository
 	wallet, err := s.walletRepo.GetByID(ctx, walletID)
 	if err != nil {
 		return fmt.Errorf("failed to get wallet: %w", err)
@@ -927,6 +940,7 @@ func (s *WalletService) verifySingleOwnerSignature(ctx context.Context, wallet *
 
 // GetWallet retrieves a single wallet by ID
 func (s *WalletService) GetWallet(ctx context.Context, walletID uuid.UUID, userSub string) (*types.Wallet, error) {
+	// App-scoped access is automatically enforced by repository
 	wallet, err := s.walletRepo.GetByID(ctx, walletID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get wallet: %w", err)
@@ -948,6 +962,7 @@ func (s *WalletService) GetWallet(ctx context.Context, walletID uuid.UUID, userS
 }
 
 // ListWallets lists wallets with pagination and filtering
+// App-scoped access is automatically enforced by repository
 func (s *WalletService) ListWallets(ctx context.Context, req *ListWalletsRequest) ([]*types.Wallet, *string, error) {
 	// Get user
 	user, err := s.userRepo.GetByExternalSub(ctx, req.UserSub)
@@ -958,69 +973,23 @@ func (s *WalletService) ListWallets(ctx context.Context, req *ListWalletsRequest
 		return []*types.Wallet{}, nil, nil
 	}
 
-	// Build query
-	query := `
-		SELECT id, user_id, chain_type, owner_id, exec_backend, address, created_at
-		FROM wallets
-		WHERE user_id = $1
-	`
-	args := []interface{}{user.ID}
-	argPos := 2
-
-	// Apply filters
-	if req.ChainType != "" {
-		query += fmt.Sprintf(" AND chain_type = $%d", argPos)
-		args = append(args, req.ChainType)
-		argPos++
-	}
-
-	// Cursor-based pagination
+	// Use repository's List method (app_id scope is automatically enforced)
+	var cursor *string
 	if req.Cursor != "" {
-		cursorTime, err := time.Parse(time.RFC3339, req.Cursor)
-		if err == nil {
-			query += fmt.Sprintf(" AND created_at < $%d", argPos)
-			args = append(args, cursorTime)
-			argPos++
-		}
+		cursor = &req.Cursor
 	}
 
-	query += " ORDER BY created_at DESC"
-
-	// Fetch limit + 1 to determine if there's a next page
-	fetchLimit := req.Limit + 1
-	query += fmt.Sprintf(" LIMIT $%d", argPos)
-	args = append(args, fetchLimit)
-
-	rows, err := s.store.DB().Query(ctx, query, args...)
+	wallets, err := s.walletRepo.List(ctx, user.ID, req.ChainType, cursor, req.Limit)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to list wallets: %w", err)
 	}
-	defer rows.Close()
 
-	wallets := []*types.Wallet{}
-	for rows.Next() {
-		var wallet types.Wallet
-		err := rows.Scan(
-			&wallet.ID,
-			&wallet.UserID,
-			&wallet.ChainType,
-			&wallet.OwnerID,
-			&wallet.ExecBackend,
-			&wallet.Address,
-			&wallet.CreatedAt,
-		)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to scan wallet: %w", err)
-		}
-		wallets = append(wallets, &wallet)
-	}
-
-	// Determine next cursor
+	// Determine next cursor (repository fetches limit+1 to check for next page)
 	var nextCursor *string
 	if len(wallets) > req.Limit {
 		wallets = wallets[:req.Limit]
-		cursor := wallets[len(wallets)-1].CreatedAt.Format(time.RFC3339)
-		nextCursor = &cursor
+		cursorVal := wallets[len(wallets)-1].CreatedAt.Format(time.RFC3339)
+		nextCursor = &cursorVal
 	}
 
 	return wallets, nextCursor, nil
@@ -1028,7 +997,7 @@ func (s *WalletService) ListWallets(ctx context.Context, req *ListWalletsRequest
 
 // UpdateWallet updates a wallet's configuration
 func (s *WalletService) UpdateWallet(ctx context.Context, req *UpdateWalletRequest) (*types.Wallet, error) {
-	// Get wallet
+	// Get wallet (automatically scoped to app_id from context)
 	wallet, err := s.walletRepo.GetByID(ctx, req.WalletID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get wallet: %w", err)
@@ -1074,12 +1043,16 @@ func (s *WalletService) UpdateWallet(ctx context.Context, req *UpdateWalletReque
 			return nil, fmt.Errorf("invalid owner public key hex")
 		}
 
+		// Get AppID from context for the new authorization key
+		appID, _ := storage.GetAppID(ctx)
+
 		authKey := &types.AuthorizationKey{
 			ID:          uuid.New(),
 			PublicKey:   publicKeyBytes,
 			Algorithm:   types.AlgorithmP256,
 			OwnerEntity: req.UserSub,
 			Status:      types.StatusActive,
+			AppID:       &appID,
 		}
 
 		if err := s.authKeyRepo.CreateTx(ctx, tx, authKey); err != nil {
@@ -1122,6 +1095,9 @@ func (s *WalletService) UpdateWallet(ctx context.Context, req *UpdateWalletReque
 			return nil, fmt.Errorf("failed to delete existing signers: %w", err)
 		}
 
+		// Get AppID from context for new session signers
+		signerAppID, _ := storage.GetAppID(ctx)
+
 		// Insert new session signers
 		for _, signer := range *req.AdditionalSigners {
 			ss := &types.SessionSigner{
@@ -1130,6 +1106,7 @@ func (s *WalletService) UpdateWallet(ctx context.Context, req *UpdateWalletReque
 				SignerID:      signer.SignerID.String(),
 				TTLExpiresAt:  time.Now().Add(365 * 24 * time.Hour), // Default 1 year
 				AllowedMethods: []string{"sign_transaction"},
+				AppID:         &signerAppID,
 			}
 
 			// Store override policy IDs if provided
@@ -1149,7 +1126,7 @@ func (s *WalletService) UpdateWallet(ctx context.Context, req *UpdateWalletReque
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	// Reload wallet
+	// Reload wallet (AppID already verified above, so using GetByIDAndAppID for consistency)
 	wallet, err = s.walletRepo.GetByID(ctx, req.WalletID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to reload wallet: %w", err)
@@ -1160,7 +1137,7 @@ func (s *WalletService) UpdateWallet(ctx context.Context, req *UpdateWalletReque
 
 // DeleteWallet deletes a wallet
 func (s *WalletService) DeleteWallet(ctx context.Context, walletID uuid.UUID, userSub string) error {
-	// Get wallet
+	// Get wallet (automatically scoped to app_id from context)
 	wallet, err := s.walletRepo.GetByID(ctx, walletID)
 	if err != nil {
 		return fmt.Errorf("failed to get wallet: %w", err)
@@ -1227,7 +1204,7 @@ func (s *WalletService) GetOwner(ctx context.Context, ownerID uuid.UUID) (*auth.
 // 2. Proper authorization and audit logging
 // 3. Rate limiting and security controls
 func (s *WalletService) ExportWallet(ctx context.Context, walletID uuid.UUID) (string, error) {
-	// Get wallet
+	// Get wallet (automatically scoped to app_id from context)
 	wallet, err := s.walletRepo.GetByID(ctx, walletID)
 	if err != nil {
 		return "", fmt.Errorf("failed to get wallet: %w", err)
@@ -1259,7 +1236,7 @@ func (s *WalletService) ExportWallet(ctx context.Context, walletID uuid.UUID) (s
 // 2. Integration with key executor for signing
 // 3. Support for different chain types
 func (s *WalletService) SignMessage(ctx context.Context, walletID uuid.UUID, message string) (string, error) {
-	// Get wallet
+	// Get wallet (automatically scoped to app_id from context)
 	wallet, err := s.walletRepo.GetByID(ctx, walletID)
 	if err != nil {
 		return "", fmt.Errorf("failed to get wallet: %w", err)
@@ -1289,7 +1266,7 @@ type TypedData struct {
 
 // SignTypedData signs EIP-712 typed data
 func (s *WalletService) SignTypedData(ctx context.Context, walletID uuid.UUID, typedData TypedData) (string, error) {
-	// Get wallet
+	// Get wallet (automatically scoped to app_id from context)
 	wallet, err := s.walletRepo.GetByID(ctx, walletID)
 	if err != nil {
 		return "", fmt.Errorf("failed to get wallet: %w", err)

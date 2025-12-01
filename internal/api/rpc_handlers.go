@@ -511,7 +511,7 @@ func (s *Server) handleEthSignTypedData(
 		return
 	}
 
-	// Verify wallet ownership
+	// Verify wallet ownership (app-scoped by context automatically)
 	wallet, err := s.walletService.GetWallet(r.Context(), walletID, userSub)
 	if err != nil {
 		s.writeError(w, apperrors.NewWithDetail(
@@ -558,7 +558,7 @@ func (s *Server) handleEthSignTypedData(
 		Message:     p.TypedData.Message,
 	}
 
-	// Sign the typed data
+	// Sign the typed data (app-scoped by context automatically)
 	signature, err := s.walletService.SignTypedData(r.Context(), walletID, typedData)
 	if err != nil {
 		s.writeError(w, apperrors.NewWithDetail(

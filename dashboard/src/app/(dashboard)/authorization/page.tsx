@@ -1,24 +1,12 @@
 'use client'
 
-import { Key, Plus, MoreHorizontal } from 'lucide-react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
+import { Key, MoreHorizontal, Plus } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { api } from '@/trpc/react'
 
 export default function AuthorizationPage() {
@@ -53,9 +41,7 @@ export default function AuthorizationPage() {
       <Card>
         <CardHeader>
           <CardTitle>Authorization Keys</CardTitle>
-          <CardDescription>
-            Keys are used to authorize wallet operations and policy changes
-          </CardDescription>
+          <CardDescription>Keys are used to authorize wallet operations and policy changes</CardDescription>
         </CardHeader>
         <CardContent>
           {isLoading ? (
@@ -101,11 +87,7 @@ export default function AuthorizationPage() {
                     <TableCell>
                       <Badge
                         variant={
-                          key.status === 'active'
-                            ? 'default'
-                            : key.status === 'rotated'
-                              ? 'secondary'
-                              : 'destructive'
+                          key.status === 'active' ? 'default' : key.status === 'rotated' ? 'secondary' : 'destructive'
                         }
                       >
                         {key.status}

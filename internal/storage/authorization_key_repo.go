@@ -22,8 +22,8 @@ func NewAuthorizationKeyRepository(store *Store) *AuthorizationKeyRepository {
 // Create creates a new authorization key
 func (r *AuthorizationKeyRepository) Create(ctx context.Context, key *types.AuthorizationKey) error {
 	query := `
-		INSERT INTO authorization_keys (id, public_key, algorithm, owner_entity, status, created_at)
-		VALUES ($1, $2, $3, $4, $5, NOW())
+		INSERT INTO authorization_keys (id, public_key, algorithm, owner_entity, status, app_id, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, NOW())
 		RETURNING created_at
 	`
 
@@ -35,6 +35,7 @@ func (r *AuthorizationKeyRepository) Create(ctx context.Context, key *types.Auth
 		key.Algorithm,
 		key.OwnerEntity,
 		key.Status,
+		key.AppID,
 	).Scan(&key.CreatedAt)
 
 	if err != nil {
@@ -47,8 +48,8 @@ func (r *AuthorizationKeyRepository) Create(ctx context.Context, key *types.Auth
 // CreateTx creates a new authorization key within a transaction
 func (r *AuthorizationKeyRepository) CreateTx(ctx context.Context, tx DBTX, key *types.AuthorizationKey) error {
 	query := `
-		INSERT INTO authorization_keys (id, public_key, algorithm, owner_entity, status, created_at)
-		VALUES ($1, $2, $3, $4, $5, NOW())
+		INSERT INTO authorization_keys (id, public_key, algorithm, owner_entity, status, app_id, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, NOW())
 		RETURNING created_at
 	`
 
@@ -60,6 +61,7 @@ func (r *AuthorizationKeyRepository) CreateTx(ctx context.Context, tx DBTX, key 
 		key.Algorithm,
 		key.OwnerEntity,
 		key.Status,
+		key.AppID,
 	).Scan(&key.CreatedAt)
 
 	if err != nil {
@@ -72,7 +74,7 @@ func (r *AuthorizationKeyRepository) CreateTx(ctx context.Context, tx DBTX, key 
 // GetByID retrieves an authorization key by ID
 func (r *AuthorizationKeyRepository) GetByID(ctx context.Context, id uuid.UUID) (*types.AuthorizationKey, error) {
 	query := `
-		SELECT id, public_key, algorithm, owner_entity, status, created_at, rotated_at
+		SELECT id, public_key, algorithm, owner_entity, status, app_id, created_at, rotated_at
 		FROM authorization_keys
 		WHERE id = $1
 	`
@@ -84,6 +86,38 @@ func (r *AuthorizationKeyRepository) GetByID(ctx context.Context, id uuid.UUID) 
 		&key.Algorithm,
 		&key.OwnerEntity,
 		&key.Status,
+		&key.AppID,
+		&key.CreatedAt,
+		&key.RotatedAt,
+	)
+
+	if err == pgx.ErrNoRows {
+		return nil, nil
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get authorization key: %w", err)
+	}
+
+	return key, nil
+}
+
+// GetByIDAndAppID retrieves an authorization key by ID scoped to an app
+func (r *AuthorizationKeyRepository) GetByIDAndAppID(ctx context.Context, id, appID uuid.UUID) (*types.AuthorizationKey, error) {
+	query := `
+		SELECT id, public_key, algorithm, owner_entity, status, app_id, created_at, rotated_at
+		FROM authorization_keys
+		WHERE id = $1 AND app_id = $2
+	`
+
+	key := &types.AuthorizationKey{}
+	err := r.store.pool.QueryRow(ctx, query, id, appID).Scan(
+		&key.ID,
+		&key.PublicKey,
+		&key.Algorithm,
+		&key.OwnerEntity,
+		&key.Status,
+		&key.AppID,
 		&key.CreatedAt,
 		&key.RotatedAt,
 	)
@@ -102,7 +136,7 @@ func (r *AuthorizationKeyRepository) GetByID(ctx context.Context, id uuid.UUID) 
 // GetActiveByOwnerEntity retrieves all active keys for an owner entity
 func (r *AuthorizationKeyRepository) GetActiveByOwnerEntity(ctx context.Context, ownerEntity string) ([]*types.AuthorizationKey, error) {
 	query := `
-		SELECT id, public_key, algorithm, owner_entity, status, created_at, rotated_at
+		SELECT id, public_key, algorithm, owner_entity, status, app_id, created_at, rotated_at
 		FROM authorization_keys
 		WHERE owner_entity = $1 AND status = 'active'
 		ORDER BY created_at DESC
@@ -123,6 +157,87 @@ func (r *AuthorizationKeyRepository) GetActiveByOwnerEntity(ctx context.Context,
 			&key.Algorithm,
 			&key.OwnerEntity,
 			&key.Status,
+			&key.AppID,
+			&key.CreatedAt,
+			&key.RotatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan authorization key: %w", err)
+		}
+		keys = append(keys, key)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating authorization keys: %w", err)
+	}
+
+	return keys, nil
+}
+
+// GetActiveByOwnerEntityAndAppID retrieves all active keys for an owner entity scoped to an app
+func (r *AuthorizationKeyRepository) GetActiveByOwnerEntityAndAppID(ctx context.Context, ownerEntity string, appID uuid.UUID) ([]*types.AuthorizationKey, error) {
+	query := `
+		SELECT id, public_key, algorithm, owner_entity, status, app_id, created_at, rotated_at
+		FROM authorization_keys
+		WHERE owner_entity = $1 AND status = 'active' AND app_id = $2
+		ORDER BY created_at DESC
+	`
+
+	rows, err := r.store.pool.Query(ctx, query, ownerEntity, appID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query authorization keys: %w", err)
+	}
+	defer rows.Close()
+
+	var keys []*types.AuthorizationKey
+	for rows.Next() {
+		key := &types.AuthorizationKey{}
+		if err := rows.Scan(
+			&key.ID,
+			&key.PublicKey,
+			&key.Algorithm,
+			&key.OwnerEntity,
+			&key.Status,
+			&key.AppID,
+			&key.CreatedAt,
+			&key.RotatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan authorization key: %w", err)
+		}
+		keys = append(keys, key)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating authorization keys: %w", err)
+	}
+
+	return keys, nil
+}
+
+// GetByAppID retrieves all authorization keys for an app
+func (r *AuthorizationKeyRepository) GetByAppID(ctx context.Context, appID uuid.UUID) ([]*types.AuthorizationKey, error) {
+	query := `
+		SELECT id, public_key, algorithm, owner_entity, status, app_id, created_at, rotated_at
+		FROM authorization_keys
+		WHERE app_id = $1
+		ORDER BY created_at DESC
+	`
+
+	rows, err := r.store.pool.Query(ctx, query, appID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query authorization keys: %w", err)
+	}
+	defer rows.Close()
+
+	var keys []*types.AuthorizationKey
+	for rows.Next() {
+		key := &types.AuthorizationKey{}
+		if err := rows.Scan(
+			&key.ID,
+			&key.PublicKey,
+			&key.Algorithm,
+			&key.OwnerEntity,
+			&key.Status,
+			&key.AppID,
 			&key.CreatedAt,
 			&key.RotatedAt,
 		); err != nil {

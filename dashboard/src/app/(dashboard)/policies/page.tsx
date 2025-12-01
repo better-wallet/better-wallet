@@ -1,11 +1,9 @@
 'use client'
 
-import { Plus, Shield, MoreHorizontal } from 'lucide-react'
+import { MoreHorizontal, Plus, Shield } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Badge } from '@/components/ui/badge'
-import { Skeleton } from '@/components/ui/skeleton'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,6 +11,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { api } from '@/trpc/react'
 
 export default function PoliciesPage() {
@@ -93,9 +93,7 @@ export default function PoliciesPage() {
                       <Badge variant="secondary">{getRuleCount(policy.rules)} rules</Badge>
                     </TableCell>
                     <TableCell>{policy.version}</TableCell>
-                    <TableCell className="font-mono text-sm">
-                      {policy.owner_id.slice(0, 8)}...
-                    </TableCell>
+                    <TableCell className="font-mono text-sm">{policy.owner_id.slice(0, 8)}...</TableCell>
                     <TableCell>{formatDate(policy.created_at)}</TableCell>
                     <TableCell>
                       <DropdownMenu>

@@ -1,13 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { Wallet } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Wallet } from 'lucide-react'
+import { useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { signIn } from '@/lib/auth/client'
 
 export default function LoginPage() {
@@ -53,9 +53,7 @@ export default function LoginPage() {
           <span className="font-bold text-2xl">Better Wallet</span>
         </div>
         <CardTitle className="text-2xl text-center">Sign in</CardTitle>
-        <CardDescription className="text-center">
-          Sign in to your account to access the dashboard
-        </CardDescription>
+        <CardDescription className="text-center">Sign in to your account to access the dashboard</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid grid-cols-2 gap-4">

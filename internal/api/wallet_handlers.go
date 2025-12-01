@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/better-wallet/better-wallet/internal/app"
+	"github.com/better-wallet/better-wallet/internal/middleware"
 	"github.com/better-wallet/better-wallet/internal/storage"
 	"github.com/better-wallet/better-wallet/pkg/auth"
 	apperrors "github.com/better-wallet/better-wallet/pkg/errors"
@@ -256,7 +257,7 @@ func (s *Server) handleListWallets(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Fetch wallets
+	// Fetch wallets (app-scoped by context automatically)
 	wallets, nextCursor, err := s.walletService.ListWallets(r.Context(), &app.ListWalletsRequest{
 		UserSub:      userSub,
 		Cursor:       cursor,
@@ -363,6 +364,7 @@ func (s *Server) handleCreateWallet(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Create wallet (app-scoped by context automatically)
 	wallet, err := s.walletService.CreateWallet(r.Context(), &app.CreateWalletRequest{
 		UserSub:           userSub,
 		ChainType:         req.ChainType,
@@ -425,7 +427,7 @@ func (s *Server) handleUpdateWallet(w http.ResponseWriter, r *http.Request, wall
 		return
 	}
 
-	// Update wallet
+	// Update wallet (app-scoped by context automatically)
 	wallet, err := s.walletService.UpdateWallet(r.Context(), &app.UpdateWalletRequest{
 		UserSub:           userSub,
 		WalletID:          walletID,
@@ -466,7 +468,7 @@ func (s *Server) handleDeleteWallet(w http.ResponseWriter, r *http.Request, wall
 		return
 	}
 
-	// Delete wallet
+	// Delete wallet (app-scoped by context automatically)
 	err := s.walletService.DeleteWallet(r.Context(), walletID, userSub)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
@@ -867,7 +869,7 @@ func (s *Server) handleExportWallet(w http.ResponseWriter, r *http.Request, wall
 		return
 	}
 
-	// Get wallet and verify ownership
+	// Get wallet and verify ownership (app-scoped by context automatically)
 	wallet, err := s.walletService.GetWallet(r.Context(), walletID, userSub)
 	if err != nil {
 		s.writeError(w, apperrors.NewWithDetail(
@@ -1007,8 +1009,20 @@ func (s *Server) handleWalletsAuthenticate(w http.ResponseWriter, r *http.Reques
 	// The user_jwt allows clients to provide an identity assertion in the request body
 	// This is validated to ensure the caller has valid authentication
 	if req.UserJWT != "" {
+		// Get app from context for auth settings
+		app := middleware.GetApp(r.Context())
+		if app == nil || app.Settings.Auth == nil {
+			s.writeError(w, apperrors.NewWithDetail(
+				apperrors.ErrCodeUnauthorized,
+				"Auth not configured",
+				"",
+				http.StatusUnauthorized,
+			))
+			return
+		}
+
 		// Validate the JWT using the user auth middleware's validator
-		jwtUserSub, err := s.userAuthMiddleware.ValidateJWT(req.UserJWT)
+		jwtUserSub, err := s.userAuthMiddleware.ValidateJWT(req.UserJWT, app.Settings.Auth)
 		if err != nil {
 			s.writeError(w, apperrors.NewWithDetail(
 				apperrors.ErrCodeUnauthorized,
@@ -1173,7 +1187,7 @@ func (s *Server) handleAuthenticateWallet(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Get wallet and verify ownership
+	// Get wallet and verify ownership (app-scoped by context automatically)
 	wallet, err := s.walletService.GetWallet(r.Context(), walletID, userSub)
 	if err != nil {
 		s.writeError(w, apperrors.NewWithDetail(
@@ -1189,7 +1203,7 @@ func (s *Server) handleAuthenticateWallet(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Sign the message with the wallet's private key
+	// Sign the message with the wallet's private key (app-scoped by context automatically)
 	signature, err := s.walletService.SignMessage(r.Context(), walletID, req.Message)
 	if err != nil {
 		s.writeError(w, apperrors.NewWithDetail(

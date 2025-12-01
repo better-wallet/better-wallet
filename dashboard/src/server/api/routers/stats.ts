@@ -1,5 +1,5 @@
-import { createTRPCRouter, protectedProcedure } from '../trpc'
 import { apiClient } from '@/lib/api/client'
+import { createTRPCRouter, protectedProcedure } from '../trpc'
 
 export const statsRouter = createTRPCRouter({
   overview: protectedProcedure.query(async () => {
