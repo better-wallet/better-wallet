@@ -19,12 +19,13 @@ type Config struct {
 	// KMS Backend Config
 	KMSKeyID string
 
-	// TEE Backend Config (AWS Nitro Enclave)
-	TEEVsockCID            uint32 // Enclave CID (assigned by Nitro)
+	// TEE Backend Config
+	// Platform-agnostic design allows self-hosted users to choose their TEE provider
+	TEEPlatform            string // TEE platform: "dev", "aws-nitro" (future: "azure-sgx", "gcp-confidential")
+	TEEVsockCID            uint32 // Enclave CID (required for aws-nitro)
 	TEEVsockPort           uint32 // Enclave port (default 5000)
 	TEEMasterKeyHex        string // Master key for encrypting shares in database
 	TEEAttestationRequired bool   // Require attestation verification
-	TEEDevMode             bool   // Enable TCP fallback for development (connect to localhost)
 
 	// Server
 	Port int
@@ -36,11 +37,11 @@ func Load() (*Config, error) {
 		PostgresDSN:            getEnv("POSTGRES_DSN", ""),
 		ExecutionBackend:       getEnv("EXECUTION_BACKEND", "kms"),
 		KMSKeyID:               getEnv("KMS_KEY_ID", ""),
+		TEEPlatform:            getEnv("TEE_PLATFORM", "dev"), // Default to dev platform
 		TEEVsockCID:            uint32(getEnvInt("TEE_VSOCK_CID", 0)),
 		TEEVsockPort:           uint32(getEnvInt("TEE_VSOCK_PORT", 5000)),
 		TEEMasterKeyHex:        getEnv("TEE_MASTER_KEY_HEX", ""),
 		TEEAttestationRequired: getEnvBool("TEE_ATTESTATION_REQUIRED", false),
-		TEEDevMode:             getEnvBool("TEE_DEV_MODE", false),
 		Port:                   getEnvInt("PORT", 8080),
 	}
 
@@ -66,12 +67,21 @@ func (c *Config) Validate() error {
 	}
 
 	if c.ExecutionBackend == "tee" {
-		// vsock is not yet implemented - require dev mode until it is
-		if !c.TEEDevMode {
-			return fmt.Errorf("TEE backend requires TEE_DEV_MODE=true (vsock not yet implemented for production Nitro deployment)")
-		}
 		if c.TEEMasterKeyHex == "" {
 			return fmt.Errorf("TEE_MASTER_KEY_HEX is required when EXECUTION_BACKEND is 'tee'")
+		}
+
+		// Validate platform-specific requirements
+		switch c.TEEPlatform {
+		case "dev":
+			// Development mode using TCP - no additional config needed
+		case "aws-nitro":
+			// AWS Nitro Enclave using vsock (Linux only)
+			if c.TEEVsockCID == 0 {
+				return fmt.Errorf("TEE_VSOCK_CID is required when TEE_PLATFORM is 'aws-nitro'")
+			}
+		default:
+			return fmt.Errorf("unsupported TEE_PLATFORM: %s (supported: dev, aws-nitro)", c.TEEPlatform)
 		}
 	}
 

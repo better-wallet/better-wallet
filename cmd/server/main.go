@@ -44,10 +44,10 @@ func main() {
 		}
 	case "tee":
 		keyExec, err = keyexec.NewTEEExecutor(&keyexec.TEEConfig{
+			Platform:     cfg.TEEPlatform,
 			VsockCID:     cfg.TEEVsockCID,
 			VsockPort:    cfg.TEEVsockPort,
 			MasterKeyHex: cfg.TEEMasterKeyHex,
-			DevMode:      cfg.TEEDevMode,
 		})
 		if err != nil {
 			log.Fatalf("Failed to initialize TEE executor: %v", err)

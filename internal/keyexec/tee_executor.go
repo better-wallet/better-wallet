@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"time"
 
 	"github.com/ethereum/go-ethereum/core/types"
@@ -46,35 +45,38 @@ import (
 // - Enclave memory is encrypted and isolated from the host
 // - exec_share is sealed with enclave's attestation key
 type TEEExecutor struct {
-	// vsockCID is the Context ID for the enclave's vsock connection
-	vsockCID uint32
+	// dialer handles platform-specific connection to the TEE enclave
+	dialer TEEDialer
 
-	// vsockPort is the port number for the enclave service
-	vsockPort uint32
+	// connectionTimeout for enclave operations
+	connectionTimeout time.Duration
+
+	// masterKey for encrypting shares stored in database
+	masterKey []byte
 
 	// attestationDoc is the enclave's attestation document (for verification)
 	attestationDoc []byte
-
-	// connectionTimeout for vsock operations
-	connectionTimeout time.Duration
-
-	// masterKey for encrypting shares stored in database (same as KMS)
-	masterKey []byte
-
-	// devMode enables TCP fallback for development/testing
-	devMode bool
 }
 
 // TEEConfig contains configuration for the TEE executor
 type TEEConfig struct {
-	VsockCID          uint32
-	VsockPort         uint32
-	ConnectionTimeout time.Duration
-	MasterKeyHex      string
+	// Platform specifies which TEE platform to use
+	// Supported: "dev" (TCP for development), "aws-nitro" (vsock for Nitro Enclaves)
+	// Future: "azure-sgx", "gcp-confidential"
+	Platform string
 
-	// DevMode enables TCP fallback for development/testing (connects to localhost:VsockPort)
-	// In production (Nitro Enclave), this should be false and vsock will be used
-	DevMode bool
+	// VsockCID is the Context ID for AWS Nitro Enclave vsock connection
+	// Required when Platform is "aws-nitro"
+	VsockCID uint32
+
+	// VsockPort is the port number for the enclave service (default: 5000)
+	VsockPort uint32
+
+	// ConnectionTimeout for enclave operations (default: 30s)
+	ConnectionTimeout time.Duration
+
+	// MasterKeyHex is the master key for encrypting auth shares in database
+	MasterKeyHex string
 }
 
 // EnclaveRequest represents a request sent to the enclave
@@ -124,15 +126,18 @@ type EnclaveResponse struct {
 
 // NewTEEExecutor creates a new TEE executor
 func NewTEEExecutor(cfg *TEEConfig) (*TEEExecutor, error) {
-	// In dev mode, VsockCID is not required (we use TCP)
-	if !cfg.DevMode && cfg.VsockCID == 0 {
-		return nil, fmt.Errorf("vsock CID is required (or enable DevMode for TCP fallback)")
-	}
+	// Set defaults
 	if cfg.VsockPort == 0 {
-		cfg.VsockPort = 5000 // Default enclave port
+		cfg.VsockPort = 5000
 	}
 	if cfg.ConnectionTimeout == 0 {
 		cfg.ConnectionTimeout = 30 * time.Second
+	}
+
+	// Create platform-specific dialer
+	dialer, err := NewTEEDialer(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create TEE dialer: %w", err)
 	}
 
 	// Master key for encrypting auth shares in database
@@ -140,11 +145,9 @@ func NewTEEExecutor(cfg *TEEConfig) (*TEEExecutor, error) {
 	copy(masterKey, []byte(cfg.MasterKeyHex))
 
 	return &TEEExecutor{
-		vsockCID:          cfg.VsockCID,
-		vsockPort:         cfg.VsockPort,
+		dialer:            dialer,
 		connectionTimeout: cfg.ConnectionTimeout,
 		masterKey:         masterKey,
-		devMode:           cfg.DevMode,
 	}, nil
 }
 
@@ -270,13 +273,12 @@ func (t *TEEExecutor) Decrypt(ctx context.Context, encryptedData []byte) ([]byte
 }
 
 
-// callEnclave sends a request to the enclave via vsock and returns the response
+// callEnclave sends a request to the enclave and returns the response
 func (t *TEEExecutor) callEnclave(ctx context.Context, req *EnclaveRequest) (*EnclaveResponse, error) {
-	// Create vsock connection to enclave
-	// Note: This uses AF_VSOCK which is Linux-specific for Nitro Enclaves
-	conn, err := t.dialVsock(ctx)
+	// Create connection to enclave using platform-specific dialer
+	conn, err := t.dialer.Dial(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to enclave: %w", err)
+		return nil, fmt.Errorf("failed to connect to enclave (%s): %w", t.dialer.Platform(), err)
 	}
 	defer conn.Close()
 
@@ -332,24 +334,9 @@ func (t *TEEExecutor) callEnclave(ctx context.Context, req *EnclaveRequest) (*En
 	return &resp, nil
 }
 
-// dialVsock creates a connection to the enclave
-// In dev mode, uses TCP to localhost; in production, would use vsock
-func (t *TEEExecutor) dialVsock(ctx context.Context) (net.Conn, error) {
-	if t.devMode {
-		// Development mode: connect via TCP to localhost
-		// The enclave application should be running on localhost:vsockPort
-		addr := fmt.Sprintf("127.0.0.1:%d", t.vsockPort)
-		dialer := net.Dialer{Timeout: t.connectionTimeout}
-		return dialer.DialContext(ctx, "tcp", addr)
-	}
-
-	// Production mode: use vsock
-	// This requires the mdlayher/vsock package or syscall-based implementation:
-	//   import "github.com/mdlayher/vsock"
-	//   return vsock.Dial(t.vsockCID, t.vsockPort, nil)
-	//
-	// For now, return an error indicating vsock is not yet implemented
-	return nil, fmt.Errorf("vsock not implemented - use DevMode=true for TCP fallback, or deploy to AWS Nitro Enclave")
+// Platform returns the TEE platform being used
+func (t *TEEExecutor) Platform() string {
+	return t.dialer.Platform()
 }
 
 // Helper functions for AES-GCM encryption (shared with KMS executor)
