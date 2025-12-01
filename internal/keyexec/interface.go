@@ -2,17 +2,18 @@ package keyexec
 
 import (
 	"context"
-	"crypto/ecdsa"
 
 	"github.com/ethereum/go-ethereum/core/types"
 )
 
 // KeyExecutor defines the interface for key execution backends
+// Uses 2-of-2 Shamir's Secret Sharing: auth_share + exec_share
 type KeyExecutor interface {
-	// GenerateAndSplitKey generates a new key and splits it into shares
+	// GenerateAndSplitKey generates a new key and splits it using Shamir's Secret Sharing (2-of-2)
+	// Returns KeyMaterial with AuthShare (stored in DB) and ExecShare (managed by backend)
 	GenerateAndSplitKey(ctx context.Context) (*KeyMaterial, error)
 
-	// Sign signs a transaction using the key material
+	// SignTransaction signs a transaction using the key material
 	SignTransaction(ctx context.Context, keyMaterial *KeyMaterial, tx *types.Transaction, chainID int64) (*types.Transaction, error)
 
 	// SignMessage signs a raw message (will hash the message internally)
@@ -30,22 +31,23 @@ type KeyExecutor interface {
 }
 
 // KeyMaterial represents the key material needed for signing
+// Uses 2-of-2 scheme: both auth_share and exec_share are required
 type KeyMaterial struct {
 	// Address is the Ethereum address derived from the key
 	Address string
 
-	// AuthShare is stored in the database (encrypted)
+	// AuthShare is stored in the database (encrypted with KMS)
+	// Retrieved when user authenticates
 	AuthShare []byte
 
-	// ExecShare is stored in KMS/TEE
+	// ExecShare is managed by the execution backend:
+	// - KMS mode: encrypted and stored in database
+	// - TEE mode: sealed inside enclave memory
 	ExecShare []byte
 
-	// Metadata for key rotation and versioning
-	Version int
-}
+	// Threshold is the minimum number of shares required (always 2)
+	Threshold int
 
-// RecoveredKey represents a fully reconstructed private key
-type RecoveredKey struct {
-	PrivateKey *ecdsa.PrivateKey
-	Address    string
+	// TotalShares is the total number of shares (always 2)
+	TotalShares int
 }

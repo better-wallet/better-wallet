@@ -47,14 +47,35 @@ type Wallet struct {
 	CreatedAt   time.Time  `json:"created_at"`
 }
 
-// WalletShare represents encrypted key material
+// WalletShare represents encrypted key material (Shamir's Secret Sharing 2-of-3)
 type WalletShare struct {
 	WalletID      uuid.UUID `json:"wallet_id"`
 	ShareType     string    `json:"share_type"` // auth_share, exec_share, enclave_share
 	BlobEncrypted []byte    `json:"blob_encrypted"`
 	KMSKeyID      string    `json:"kms_key_id,omitempty"`
-	Version       int       `json:"version"`
+	// Threshold is the minimum number of shares required to reconstruct (default: 2)
+	Threshold int `json:"threshold,omitempty"`
+	// TotalShares is the total number of shares generated (default: 3)
+	TotalShares int `json:"total_shares,omitempty"`
 }
+
+// RecoveryShareInfo represents recovery share metadata stored server-side
+// The actual recovery share is encrypted and stored client-side (user-managed)
+type RecoveryShareInfo struct {
+	WalletID         uuid.UUID  `json:"wallet_id"`
+	ShareIndex       int        `json:"share_index"`        // Shamir share index (typically 2 for recovery)
+	EncryptionMethod string     `json:"encryption_method"`  // password, cloud_backup, passkey
+	Hint             string     `json:"hint,omitempty"`     // Password hint (optional)
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        *time.Time `json:"updated_at,omitempty"`
+}
+
+// RecoveryMethod constants
+const (
+	RecoveryMethodPassword    = "password"
+	RecoveryMethodCloudBackup = "cloud_backup"
+	RecoveryMethodPasskey     = "passkey"
+)
 
 // Policy represents a policy that controls wallet operations
 type Policy struct {
@@ -140,9 +161,10 @@ const (
 
 // ShareType constants
 const (
-	ShareTypeAuth    = "auth_share"
-	ShareTypeExec    = "exec_share"
-	ShareTypeEnclave = "enclave_share"
+	ShareTypeAuth     = "auth_share"
+	ShareTypeExec     = "exec_share"
+	ShareTypeEnclave  = "enclave_share" // TEE-sealed share
+	ShareTypeRecovery = "recovery_share"
 )
 
 // Status constants

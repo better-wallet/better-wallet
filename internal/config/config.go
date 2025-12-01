@@ -14,9 +14,17 @@ type Config struct {
 	PostgresDSN string
 
 	// Key Execution Backend
-	ExecutionBackend       string // kms or tee
-	KMSKeyID               string
-	TEEAttestationRequired bool
+	ExecutionBackend string // kms or tee
+
+	// KMS Backend Config
+	KMSKeyID string
+
+	// TEE Backend Config (AWS Nitro Enclave)
+	TEEVsockCID            uint32 // Enclave CID (assigned by Nitro)
+	TEEVsockPort           uint32 // Enclave port (default 5000)
+	TEEMasterKeyHex        string // Master key for encrypting shares in database
+	TEEAttestationRequired bool   // Require attestation verification
+	TEEDevMode             bool   // Enable TCP fallback for development (connect to localhost)
 
 	// Server
 	Port int
@@ -28,7 +36,11 @@ func Load() (*Config, error) {
 		PostgresDSN:            getEnv("POSTGRES_DSN", ""),
 		ExecutionBackend:       getEnv("EXECUTION_BACKEND", "kms"),
 		KMSKeyID:               getEnv("KMS_KEY_ID", ""),
+		TEEVsockCID:            uint32(getEnvInt("TEE_VSOCK_CID", 0)),
+		TEEVsockPort:           uint32(getEnvInt("TEE_VSOCK_PORT", 5000)),
+		TEEMasterKeyHex:        getEnv("TEE_MASTER_KEY_HEX", ""),
 		TEEAttestationRequired: getEnvBool("TEE_ATTESTATION_REQUIRED", false),
+		TEEDevMode:             getEnvBool("TEE_DEV_MODE", false),
 		Port:                   getEnvInt("PORT", 8080),
 	}
 
@@ -51,6 +63,16 @@ func (c *Config) Validate() error {
 
 	if c.ExecutionBackend == "kms" && c.KMSKeyID == "" {
 		return fmt.Errorf("KMS_KEY_ID is required when EXECUTION_BACKEND is 'kms'")
+	}
+
+	if c.ExecutionBackend == "tee" {
+		// vsock is not yet implemented - require dev mode until it is
+		if !c.TEEDevMode {
+			return fmt.Errorf("TEE backend requires TEE_DEV_MODE=true (vsock not yet implemented for production Nitro deployment)")
+		}
+		if c.TEEMasterKeyHex == "" {
+			return fmt.Errorf("TEE_MASTER_KEY_HEX is required when EXECUTION_BACKEND is 'tee'")
+		}
 	}
 
 	return nil

@@ -37,7 +37,10 @@ By participating in this project, you agree to abide by our Code of Conduct. Ple
 5. Set up the database:
    ```bash
    createdb better_wallet_dev
-   psql -d better_wallet_dev -f migrations/0001_initial_schema.up.sql
+   cd dashboard
+   bun install
+   DATABASE_URL=postgres://user:pass@localhost:5432/better_wallet_dev bun run db:push
+   cd ..
    ```
 
 6. Copy the example environment file and configure it:
@@ -164,7 +167,7 @@ better-wallet/
 │   ├── policy/          # Policy engine
 │   └── storage/         # Database layer
 ├── pkg/                 # Public packages
-├── migrations/          # Database migrations
+├── dashboard/           # Next.js dashboard (manages DB schema)
 └── docs/                # Documentation
 ```
 

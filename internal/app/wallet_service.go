@@ -68,6 +68,15 @@ type CreateWalletRequest struct {
 	ExecBackend       string
 	PolicyIDs         []uuid.UUID       // Policy IDs to attach
 	AdditionalSigners []AdditionalSigner // Session signers to create
+	RecoveryMethod    string            // "password", "cloud_backup", or "passkey"
+	RecoveryHint      string            // Optional hint for password recovery
+}
+
+// CreateWalletResponse includes wallet info
+type CreateWalletResponse struct {
+	Wallet *types.Wallet `json:"wallet"`
+	// Note: RecoveryShare removed - using 2-of-2 scheme
+	// Recovery share will be added with on-device mode (2-of-3 scheme)
 }
 
 // ListWalletsRequest represents a request to list wallets
@@ -102,7 +111,8 @@ type AdditionalSigner struct {
 }
 
 // CreateWallet creates a new wallet for a user
-func (s *WalletService) CreateWallet(ctx context.Context, req *CreateWalletRequest) (*types.Wallet, error) {
+// Returns the wallet and recovery share (recovery share must be stored securely by the client)
+func (s *WalletService) CreateWallet(ctx context.Context, req *CreateWalletRequest) (*CreateWalletResponse, error) {
 	// Get AppID from context for multi-tenant isolation
 	appID, _ := storage.GetAppID(ctx)
 
@@ -245,7 +255,8 @@ func (s *WalletService) CreateWallet(ctx context.Context, req *CreateWalletReque
 		WalletID:      wallet.ID,
 		ShareType:     types.ShareTypeAuth,
 		BlobEncrypted: encryptedAuthShare,
-		Version:       1,
+		Threshold:     keyMaterial.Threshold,
+		TotalShares:   keyMaterial.TotalShares,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to store auth share: %w", err)
 	}
@@ -254,10 +265,14 @@ func (s *WalletService) CreateWallet(ctx context.Context, req *CreateWalletReque
 		WalletID:      wallet.ID,
 		ShareType:     types.ShareTypeExec,
 		BlobEncrypted: encryptedExecShare,
-		Version:       1,
+		Threshold:     keyMaterial.Threshold,
+		TotalShares:   keyMaterial.TotalShares,
 	}); err != nil {
 		return nil, fmt.Errorf("failed to store exec share: %w", err)
 	}
+
+	// Note: 2-of-2 scheme - no recovery share
+	// Recovery share support will be added with on-device mode (2-of-3 scheme)
 
 	// Attach policies
 	if len(req.PolicyIDs) > 0 {
@@ -306,7 +321,9 @@ func (s *WalletService) CreateWallet(ctx context.Context, req *CreateWalletReque
 		UserAgent:    middleware.GetUserAgent(ctx),
 	})
 
-	return wallet, nil
+	return &CreateWalletResponse{
+		Wallet: wallet,
+	}, nil
 }
 
 // SignTransactionRequest represents a request to sign a transaction
@@ -538,7 +555,6 @@ func (s *WalletService) SignTransaction(ctx context.Context, userSub string, req
 		Address:   wallet.Address,
 		AuthShare: authShare,
 		ExecShare: execShare,
-		Version:   1,
 	}
 
 	// Parse recipient address
@@ -1307,8 +1323,8 @@ func (s *WalletService) ExportWallet(ctx context.Context, userSub string, req *E
 		return nil, fmt.Errorf("missing required shares")
 	}
 
-	// Reconstruct private key using internal crypto package
-	privateKeyBytes, err := internalcrypto.CombineShares(authShare, execShare)
+	// Reconstruct private key using Shamir's Secret Sharing
+	privateKeyBytes, err := internalcrypto.CombineAuthAndExec(authShare, execShare)
 	if err != nil {
 		return nil, fmt.Errorf("failed to combine shares: %w", err)
 	}
@@ -1458,7 +1474,6 @@ func (s *WalletService) SignMessage(ctx context.Context, userSub string, req *Si
 		Address:   wallet.Address,
 		AuthShare: authShare,
 		ExecShare: execShare,
-		Version:   1,
 	}
 
 	// Sign the pre-computed hash (use SignHash to avoid double-hashing)
@@ -1536,7 +1551,6 @@ func (s *WalletService) SignTypedData(ctx context.Context, walletID uuid.UUID, t
 		Address:   wallet.Address,
 		AuthShare: authShare,
 		ExecShare: execShare,
-		Version:   1,
 	}
 
 	// Use key executor to sign the pre-computed hash (use SignHash to avoid double-hashing)

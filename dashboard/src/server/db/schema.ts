@@ -182,10 +182,11 @@ export const walletShares = pgTable(
     walletId: uuid('wallet_id')
       .notNull()
       .references(() => wallets.id, { onDelete: 'cascade' }),
-    shareType: text('share_type').notNull(),
+    shareType: text('share_type').notNull(), // 'auth' or 'exec'
     blobEncrypted: bytea('blob_encrypted').notNull(),
     kmsKeyId: text('kms_key_id'),
-    version: integer('version').notNull().default(1),
+    threshold: integer('threshold').notNull().default(2), // SSS threshold (2-of-2)
+    totalShares: integer('total_shares').notNull().default(2), // SSS total shares (2-of-2)
   },
   (table) => [primaryKey({ columns: [table.walletId, table.shareType] })]
 )
@@ -250,14 +251,8 @@ export const auditLogs = pgTable('audit_logs', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
-export const recoveryInfo = pgTable('recovery_info', {
-  walletId: uuid('wallet_id')
-    .primaryKey()
-    .references(() => wallets.id, { onDelete: 'cascade' }),
-  method: text('method').notNull(),
-  blobEncrypted: bytea('blob_encrypted').notNull(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-})
+// Note: recoveryShareInfo table removed - using 2-of-2 scheme without recovery share
+// Recovery share support will be added with on-device mode (2-of-3 scheme)
 
 export const transactions = pgTable('transactions', {
   id: uuid('id').primaryKey().defaultRandom(),

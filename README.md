@@ -75,9 +75,6 @@ POSTGRES_DSN=postgres://user:pass@localhost:5432/better_wallet?sslmode=disable
 EXECUTION_BACKEND=kms
 KMS_KEY_ID=your-master-key-id
 
-# EVM Configuration
-RPC_ENDPOINT=https://eth-mainnet.g.alchemy.com/v2/YOUR_API_KEY
-
 # Server
 PORT=8080
 ```

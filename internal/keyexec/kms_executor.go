@@ -16,6 +16,7 @@ import (
 	"github.com/better-wallet/better-wallet/internal/crypto"
 )
 
+
 // KMSExecutor implements KeyExecutor using KMS/Vault-like encryption
 // This is a simplified implementation - production would use actual KMS (AWS KMS, HashiCorp Vault, etc.)
 type KMSExecutor struct {
@@ -40,7 +41,7 @@ func NewKMSExecutor(masterKeyHex string) (*KMSExecutor, error) {
 	}, nil
 }
 
-// GenerateAndSplitKey generates a new key and splits it into shares
+// GenerateAndSplitKey generates a new key and splits it using Shamir's Secret Sharing (2-of-2)
 func (k *KMSExecutor) GenerateAndSplitKey(ctx context.Context) (*KeyMaterial, error) {
 	// Generate new Ethereum private key
 	privateKey, err := crypto.GenerateEthereumKey()
@@ -54,17 +55,23 @@ func (k *KMSExecutor) GenerateAndSplitKey(ctx context.Context) (*KeyMaterial, er
 	// Convert private key to bytes
 	privateKeyBytes := crypto.PrivateKeyToBytes(privateKey)
 
-	// Split the key into two shares
-	authShare, execShare, err := crypto.SplitKey(privateKeyBytes)
+	// Split the key using Shamir's Secret Sharing (2-of-2)
+	shareSet, err := crypto.SplitKeyDefault(privateKeyBytes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to split key: %w", err)
+		return nil, fmt.Errorf("failed to split key with SSS: %w", err)
+	}
+
+	// Clear private key bytes from memory
+	for i := range privateKeyBytes {
+		privateKeyBytes[i] = 0
 	}
 
 	return &KeyMaterial{
-		Address:   address.Hex(),
-		AuthShare: authShare,
-		ExecShare: execShare,
-		Version:   1,
+		Address:     address.Hex(),
+		AuthShare:   shareSet.AuthShare,
+		ExecShare:   shareSet.ExecShare,
+		Threshold:   shareSet.Threshold,
+		TotalShares: shareSet.TotalShares,
 	}, nil
 }
 
@@ -183,10 +190,10 @@ func (k *KMSExecutor) Decrypt(ctx context.Context, encryptedData []byte) ([]byte
 	return plaintext, nil
 }
 
-// reconstructKey combines the shares to reconstruct the private key
+// reconstructKey combines the auth and exec shares to reconstruct the private key
 func (k *KMSExecutor) reconstructKey(keyMaterial *KeyMaterial) (*ecdsa.PrivateKey, error) {
-	// Combine the two shares
-	privateKeyBytes, err := crypto.CombineShares(keyMaterial.AuthShare, keyMaterial.ExecShare)
+	// Use Shamir's Secret Sharing to combine auth and exec shares
+	privateKeyBytes, err := crypto.CombineAuthAndExec(keyMaterial.AuthShare, keyMaterial.ExecShare)
 	if err != nil {
 		return nil, fmt.Errorf("failed to combine shares: %w", err)
 	}
@@ -194,11 +201,21 @@ func (k *KMSExecutor) reconstructKey(keyMaterial *KeyMaterial) (*ecdsa.PrivateKe
 	// Convert bytes back to private key
 	privateKey, err := crypto.BytesToPrivateKey(privateKeyBytes)
 	if err != nil {
+		// Clear private key bytes on error
+		for i := range privateKeyBytes {
+			privateKeyBytes[i] = 0
+		}
 		return nil, fmt.Errorf("failed to convert to private key: %w", err)
+	}
+
+	// Clear private key bytes from memory
+	for i := range privateKeyBytes {
+		privateKeyBytes[i] = 0
 	}
 
 	return privateKey, nil
 }
+
 
 // zeroKey securely zeros out the private key from memory
 func (k *KMSExecutor) zeroKey(privateKey *ecdsa.PrivateKey) {

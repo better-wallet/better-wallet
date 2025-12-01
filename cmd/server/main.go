@@ -43,7 +43,15 @@ func main() {
 			log.Fatalf("Failed to initialize KMS executor: %v", err)
 		}
 	case "tee":
-		log.Fatalf("TEE backend not yet implemented")
+		keyExec, err = keyexec.NewTEEExecutor(&keyexec.TEEConfig{
+			VsockCID:     cfg.TEEVsockCID,
+			VsockPort:    cfg.TEEVsockPort,
+			MasterKeyHex: cfg.TEEMasterKeyHex,
+			DevMode:      cfg.TEEDevMode,
+		})
+		if err != nil {
+			log.Fatalf("Failed to initialize TEE executor: %v", err)
+		}
 	default:
 		log.Fatalf("Unknown execution backend: %s", cfg.ExecutionBackend)
 	}

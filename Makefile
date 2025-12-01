@@ -1,4 +1,4 @@
-.PHONY: help build run test clean migrate-up migrate-down docker-build docker-run
+.PHONY: help build run test clean docker-build docker-run
 
 # Variables
 BINARY_NAME=better-wallet
@@ -33,16 +33,6 @@ deps: ## Download dependencies
 	@echo "Downloading dependencies..."
 	@go mod download
 	@go mod tidy
-
-migrate-up: ## Run database migrations up
-	@echo "Running migrations up..."
-	@psql -d $$POSTGRES_DSN -f migrations/0001_initial_schema.up.sql
-	@echo "Migrations complete"
-
-migrate-down: ## Run database migrations down
-	@echo "Running migrations down..."
-	@psql -d $$POSTGRES_DSN -f migrations/0001_initial_schema.down.sql
-	@echo "Rollback complete"
 
 docker-build: ## Build Docker image
 	@echo "Building Docker image..."

@@ -17,11 +17,7 @@ cd better-wallet
 
 # Create environment file
 cat > .env << 'EOF'
-AUTH_ISSUER=https://your-auth-provider.com
-AUTH_AUDIENCE=your-app-id
-AUTH_JWKS_URI=https://your-auth-provider.com/.well-known/jwks.json
 KMS_KEY_ID=dev-master-key-12345678901234567890123456789012
-RPC_ENDPOINT=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
 EOF
 ```
 
@@ -47,18 +43,24 @@ curl http://localhost:8080/health
 ### 1. Set Up Database
 
 ```bash
-# Create database
-createdb better_wallet
+# Start PostgreSQL (or use existing instance)
+# Database schema is managed by Drizzle in dashboard/
 
-# Run migrations
-psql -d better_wallet -f migrations/0001_initial_schema.up.sql
+cd dashboard
+bun install
+bun run db:push  # Push schema to database
 ```
 
 ### 2. Configure Environment
 
 ```bash
 cp .env.example .env
-# Edit .env with your settings
+# Edit .env with your settings (POSTGRES_DSN, KMS_KEY_ID, etc.)
+
+# Configure dashboard environment
+cd dashboard
+cp .env.example .env
+# Edit dashboard/.env with app settings (auth, RPC, etc.)
 ```
 
 ### 3. Run the Application
@@ -131,22 +133,14 @@ curl -X POST http://localhost:8080/v1/wallets/WALLET_ID/sign \
 
 ## Setting Up Authentication
 
-### Using Auth0
+Authentication is configured through the Dashboard, not environment variables.
 
-1. Create an Auth0 application
-2. Get your domain and client ID
-3. Configure in `.env`:
-```env
-AUTH_ISSUER=https://YOUR_DOMAIN.auth0.com/
-AUTH_AUDIENCE=YOUR_CLIENT_ID
-AUTH_JWKS_URI=https://YOUR_DOMAIN.auth0.com/.well-known/jwks.json
-```
+### Using the Dashboard
 
-### Using Better Auth
-
-1. Set up Better Auth in your application
-2. Configure the OIDC endpoint
-3. Use your Better Auth configuration in `.env`
+1. Start the dashboard: `cd dashboard && bun run dev`
+2. Create an app in the dashboard
+3. Configure authentication settings (OIDC issuer, audience, JWKS URI) in the app settings
+4. Use the app credentials (APP_ID, APP_SECRET) in your client application
 
 ## Troubleshooting
 
@@ -193,8 +187,10 @@ make test
 # Format code
 make fmt
 
-# Run migrations
-./scripts/migrate.sh up
+# Database operations (in dashboard/)
+cd dashboard
+bun run db:push      # Push schema changes
+bun run db:studio    # Open Drizzle Studio
 
 # Clean build artifacts
 make clean

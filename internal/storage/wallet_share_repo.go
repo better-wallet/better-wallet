@@ -26,16 +26,27 @@ func (r *WalletShareRepository) Create(ctx context.Context, share *types.WalletS
 // CreateTx creates a new wallet share using the provided transaction or connection
 func (r *WalletShareRepository) CreateTx(ctx context.Context, db DBTX, share *types.WalletShare) error {
 	query := `
-		INSERT INTO wallet_shares (wallet_id, share_type, blob_encrypted, kms_key_id, version)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO wallet_shares (wallet_id, share_type, blob_encrypted, kms_key_id, threshold, total_shares)
+		VALUES ($1, $2, $3, $4, $5, $6)
 	`
+
+	// Set defaults for threshold and total_shares
+	threshold := share.Threshold
+	totalShares := share.TotalShares
+	if threshold == 0 {
+		threshold = 2 // Default threshold for 2-of-3 SSS
+	}
+	if totalShares == 0 {
+		totalShares = 3 // Default total shares for SSS
+	}
 
 	_, err := db.Exec(ctx, query,
 		share.WalletID,
 		share.ShareType,
 		share.BlobEncrypted,
 		share.KMSKeyID,
-		share.Version,
+		threshold,
+		totalShares,
 	)
 
 	if err != nil {
@@ -48,7 +59,8 @@ func (r *WalletShareRepository) CreateTx(ctx context.Context, db DBTX, share *ty
 // GetByWalletID retrieves all shares for a wallet
 func (r *WalletShareRepository) GetByWalletID(ctx context.Context, walletID uuid.UUID) ([]*types.WalletShare, error) {
 	query := `
-		SELECT wallet_id, share_type, blob_encrypted, kms_key_id, version
+		SELECT wallet_id, share_type, blob_encrypted, kms_key_id,
+		       COALESCE(threshold, 2) as threshold, COALESCE(total_shares, 3) as total_shares
 		FROM wallet_shares
 		WHERE wallet_id = $1
 	`
@@ -69,7 +81,8 @@ func (r *WalletShareRepository) GetByWalletID(ctx context.Context, walletID uuid
 			&share.ShareType,
 			&share.BlobEncrypted,
 			&kmsKeyID,
-			&share.Version,
+			&share.Threshold,
+			&share.TotalShares,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan wallet share: %w", err)

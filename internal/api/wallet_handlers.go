@@ -48,6 +48,8 @@ type CreateWalletRequest struct {
 	Owner             *OwnerInput        `json:"owner,omitempty"`
 	OwnerID           *uuid.UUID         `json:"owner_id,omitempty"`
 	AdditionalSigners []AdditionalSigner `json:"additional_signers,omitempty"`
+	RecoveryMethod    string             `json:"recovery_method,omitempty"`    // password, cloud_backup, passkey
+	RecoveryHint      string             `json:"recovery_hint,omitempty"`      // Optional hint for password recovery
 }
 
 // OwnerInput for creating a new owner
@@ -381,7 +383,7 @@ func (s *Server) handleCreateWallet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create wallet (app-scoped by context automatically)
-	wallet, err := s.walletService.CreateWallet(r.Context(), &app.CreateWalletRequest{
+	createResult, err := s.walletService.CreateWallet(r.Context(), &app.CreateWalletRequest{
 		UserSub:           userSub,
 		ChainType:         req.ChainType,
 		OwnerPublicKey:    ownerPublicKey,
@@ -390,6 +392,8 @@ func (s *Server) handleCreateWallet(w http.ResponseWriter, r *http.Request) {
 		ExecBackend:       types.ExecBackendKMS,
 		PolicyIDs:         req.PolicyIDs,
 		AdditionalSigners: additionalSigners,
+		RecoveryMethod:    req.RecoveryMethod,
+		RecoveryHint:      req.RecoveryHint,
 	})
 	if err != nil {
 		s.writeError(w, apperrors.NewWithDetail(
@@ -401,7 +405,7 @@ func (s *Server) handleCreateWallet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := convertWalletToResponse(wallet)
+	response := convertWalletToResponse(createResult.Wallet)
 	s.writeJSON(w, http.StatusCreated, response)
 }
 
