@@ -2,12 +2,8 @@ package keyexec
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/ecdsa"
-	"crypto/rand"
 	"fmt"
-	"io"
 	"math/big"
 
 	ethcrypto "github.com/ethereum/go-ethereum/crypto"
@@ -16,29 +12,27 @@ import (
 	"github.com/better-wallet/better-wallet/internal/crypto"
 )
 
-
-// KMSExecutor implements KeyExecutor using KMS/Vault-like encryption
-// This is a simplified implementation - production would use actual KMS (AWS KMS, HashiCorp Vault, etc.)
+// KMSExecutor implements KeyExecutor using a pluggable KMS provider
+// Supports multiple backends: local (AES-GCM), AWS KMS, HashiCorp Vault, etc.
 type KMSExecutor struct {
-	masterKey []byte // In production, this would be in KMS/HSM
+	provider KMSProvider
 }
 
-// NewKMSExecutor creates a new KMS executor
-func NewKMSExecutor(masterKeyHex string) (*KMSExecutor, error) {
-	// In production, this would connect to KMS and retrieve the master key
-	// For MVP, we use a provided master key
-	if masterKeyHex == "" {
-		return nil, fmt.Errorf("master key is required")
+// NewKMSExecutor creates a new KMS executor with the specified provider
+func NewKMSExecutor(cfg *KMSConfig) (*KMSExecutor, error) {
+	provider, err := NewKMSProvider(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create KMS provider: %w", err)
 	}
 
-	// For simplicity, we'll generate a 32-byte key from the provided string
-	// In production, use proper KMS key derivation
-	masterKey := make([]byte, 32)
-	copy(masterKey, []byte(masterKeyHex))
-
 	return &KMSExecutor{
-		masterKey: masterKey,
+		provider: provider,
 	}, nil
+}
+
+// Provider returns the KMS provider name
+func (k *KMSExecutor) Provider() string {
+	return k.provider.Provider()
 }
 
 // GenerateAndSplitKey generates a new key and splits it using Shamir's Secret Sharing (2-of-2)
@@ -140,54 +134,14 @@ func (k *KMSExecutor) SignHash(ctx context.Context, keyMaterial *KeyMaterial, ha
 	return signature, nil
 }
 
-// Encrypt encrypts data using the master key
+// Encrypt encrypts data using the KMS provider
 func (k *KMSExecutor) Encrypt(ctx context.Context, data []byte) ([]byte, error) {
-	block, err := aes.NewCipher(k.masterKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create cipher: %w", err)
-	}
-
-	// Create GCM mode
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
-	}
-
-	// Generate nonce
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, fmt.Errorf("failed to generate nonce: %w", err)
-	}
-
-	// Encrypt and append nonce
-	ciphertext := gcm.Seal(nonce, nonce, data, nil)
-	return ciphertext, nil
+	return k.provider.Encrypt(ctx, data)
 }
 
-// Decrypt decrypts data using the master key
+// Decrypt decrypts data using the KMS provider
 func (k *KMSExecutor) Decrypt(ctx context.Context, encryptedData []byte) ([]byte, error) {
-	block, err := aes.NewCipher(k.masterKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create cipher: %w", err)
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
-	}
-
-	nonceSize := gcm.NonceSize()
-	if len(encryptedData) < nonceSize {
-		return nil, fmt.Errorf("ciphertext too short")
-	}
-
-	nonce, ciphertext := encryptedData[:nonceSize], encryptedData[nonceSize:]
-	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt: %w", err)
-	}
-
-	return plaintext, nil
+	return k.provider.Decrypt(ctx, encryptedData)
 }
 
 // reconstructKey combines the auth and exec shares to reconstruct the private key

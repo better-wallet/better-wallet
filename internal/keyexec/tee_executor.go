@@ -339,17 +339,15 @@ func (t *TEEExecutor) Platform() string {
 	return t.dialer.Platform()
 }
 
-// Helper functions for AES-GCM encryption (shared with KMS executor)
+// Helper functions for AES-GCM encryption (uses LocalKMSProvider)
 func encryptAESGCM(key, plaintext []byte) ([]byte, error) {
-	// Implementation is same as KMSExecutor.Encrypt
-	// In production, this should be refactored to a shared utility
-	kmsExec := &KMSExecutor{masterKey: key}
-	return kmsExec.Encrypt(context.Background(), plaintext)
+	provider := &LocalKMSProvider{masterKey: key}
+	return provider.Encrypt(context.Background(), plaintext)
 }
 
 func decryptAESGCM(key, ciphertext []byte) ([]byte, error) {
-	kmsExec := &KMSExecutor{masterKey: key}
-	return kmsExec.Decrypt(context.Background(), ciphertext)
+	provider := &LocalKMSProvider{masterKey: key}
+	return provider.Decrypt(context.Background(), ciphertext)
 }
 
 // TEEKeyMaterial extends KeyMaterial with TEE-specific fields

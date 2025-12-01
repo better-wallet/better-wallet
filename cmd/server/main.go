@@ -38,7 +38,15 @@ func main() {
 	var keyExec keyexec.KeyExecutor
 	switch cfg.ExecutionBackend {
 	case "kms":
-		keyExec, err = keyexec.NewKMSExecutor(cfg.KMSKeyID)
+		keyExec, err = keyexec.NewKMSExecutor(&keyexec.KMSConfig{
+			Provider:        cfg.KMSProvider,
+			LocalMasterKeyHex: cfg.KMSLocalMasterKey,
+			AWSKMSKeyID:    cfg.KMSAWSKeyID,
+			AWSKMSRegion:   cfg.KMSAWSRegion,
+			VaultAddress:   cfg.KMSVaultAddress,
+			VaultToken:     cfg.KMSVaultToken,
+			VaultTransitKey: cfg.KMSVaultTransitKey,
+		})
 		if err != nil {
 			log.Fatalf("Failed to initialize KMS executor: %v", err)
 		}

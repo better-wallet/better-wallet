@@ -17,7 +17,18 @@ type Config struct {
 	ExecutionBackend string // kms or tee
 
 	// KMS Backend Config
-	KMSKeyID string
+	// Provider-agnostic design allows self-hosted users to choose their KMS provider
+	KMSProvider       string // KMS provider: "local", "aws-kms", "vault" (default: "local")
+	KMSLocalMasterKey string // Master key for local provider
+
+	// AWS KMS config
+	KMSAWSKeyID  string // AWS KMS Key ID or ARN
+	KMSAWSRegion string // AWS region
+
+	// Vault config
+	KMSVaultAddress    string // Vault server address
+	KMSVaultToken      string // Vault token
+	KMSVaultTransitKey string // Vault Transit key name
 
 	// TEE Backend Config
 	// Platform-agnostic design allows self-hosted users to choose their TEE provider
@@ -36,7 +47,13 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		PostgresDSN:            getEnv("POSTGRES_DSN", ""),
 		ExecutionBackend:       getEnv("EXECUTION_BACKEND", "kms"),
-		KMSKeyID:               getEnv("KMS_KEY_ID", ""),
+		KMSProvider:            getEnv("KMS_PROVIDER", "local"),
+		KMSLocalMasterKey:      getEnv("KMS_LOCAL_MASTER_KEY", getEnv("KMS_KEY_ID", "")), // Backward compat
+		KMSAWSKeyID:            getEnv("KMS_AWS_KEY_ID", ""),
+		KMSAWSRegion:           getEnv("KMS_AWS_REGION", ""),
+		KMSVaultAddress:        getEnv("KMS_VAULT_ADDRESS", ""),
+		KMSVaultToken:          getEnv("KMS_VAULT_TOKEN", ""),
+		KMSVaultTransitKey:     getEnv("KMS_VAULT_TRANSIT_KEY", ""),
 		TEEPlatform:            getEnv("TEE_PLATFORM", "dev"), // Default to dev platform
 		TEEVsockCID:            uint32(getEnvInt("TEE_VSOCK_CID", 0)),
 		TEEVsockPort:           uint32(getEnvInt("TEE_VSOCK_PORT", 5000)),
@@ -62,8 +79,33 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("EXECUTION_BACKEND must be 'kms' or 'tee', got: %s", c.ExecutionBackend)
 	}
 
-	if c.ExecutionBackend == "kms" && c.KMSKeyID == "" {
-		return fmt.Errorf("KMS_KEY_ID is required when EXECUTION_BACKEND is 'kms'")
+	if c.ExecutionBackend == "kms" {
+		// Validate KMS provider-specific requirements
+		switch c.KMSProvider {
+		case "local", "":
+			if c.KMSLocalMasterKey == "" {
+				return fmt.Errorf("KMS_LOCAL_MASTER_KEY (or KMS_KEY_ID) is required when KMS_PROVIDER is 'local'")
+			}
+		case "aws-kms":
+			if c.KMSAWSKeyID == "" {
+				return fmt.Errorf("KMS_AWS_KEY_ID is required when KMS_PROVIDER is 'aws-kms'")
+			}
+			if c.KMSAWSRegion == "" {
+				return fmt.Errorf("KMS_AWS_REGION is required when KMS_PROVIDER is 'aws-kms'")
+			}
+		case "vault":
+			if c.KMSVaultAddress == "" {
+				return fmt.Errorf("KMS_VAULT_ADDRESS is required when KMS_PROVIDER is 'vault'")
+			}
+			if c.KMSVaultToken == "" {
+				return fmt.Errorf("KMS_VAULT_TOKEN is required when KMS_PROVIDER is 'vault'")
+			}
+			if c.KMSVaultTransitKey == "" {
+				return fmt.Errorf("KMS_VAULT_TRANSIT_KEY is required when KMS_PROVIDER is 'vault'")
+			}
+		default:
+			return fmt.Errorf("unsupported KMS_PROVIDER: %s (supported: local, aws-kms, vault)", c.KMSProvider)
+		}
 	}
 
 	if c.ExecutionBackend == "tee" {
