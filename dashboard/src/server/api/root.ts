@@ -1,26 +1,17 @@
 import { appMembersRouter } from './routers/app-members'
 import { appSecretsRouter } from './routers/app-secrets'
 import { appsRouter } from './routers/apps'
-import { auditRouter } from './routers/audit'
-import { authorizationKeysRouter } from './routers/authorization-keys'
-import { policiesRouter } from './routers/policies'
-import { statsRouter } from './routers/stats'
-import { transactionsRouter } from './routers/transactions'
-import { usersRouter } from './routers/users'
-import { walletsRouter } from './routers/wallets'
+import { backendRouter } from './routers/backend'
 import { createCallerFactory, createTRPCRouter } from './trpc'
 
 export const appRouter = createTRPCRouter({
+  // Dashboard-managed resources
   apps: appsRouter,
   appSecrets: appSecretsRouter,
   appMembers: appMembersRouter,
-  wallets: walletsRouter,
-  users: usersRouter,
-  policies: policiesRouter,
-  transactions: transactionsRouter,
-  authorizationKeys: authorizationKeysRouter,
-  audit: auditRouter,
-  stats: statsRouter,
+
+  // Backend-managed resources (proxied to Go API)
+  backend: backendRouter,
 })
 
 export type AppRouter = typeof appRouter

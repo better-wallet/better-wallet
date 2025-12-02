@@ -1,9 +1,10 @@
 import { TRPCError } from '@trpc/server'
-import { and, eq } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { db } from '@/server/db'
-import { appMembers, appSecrets, apps, walletUsers } from '@/server/db/schema'
+import { appSecrets } from '@/server/db/schema'
 import { createTRPCRouter, protectedProcedure } from '../trpc'
+import { checkAppAccess, getOrCreateWalletUser } from './apps'
 
 // Generate a random secret with prefix
 function generateSecret(): { secret: string; prefix: string } {
@@ -13,7 +14,7 @@ function generateSecret(): { secret: string; prefix: string } {
     randomPart += chars.charAt(Math.floor(Math.random() * chars.length))
   }
   const secret = `bw_sk_${randomPart}`
-  const prefix = secret.substring(0, 8)
+  const prefix = `${secret.substring(0, 10)}...`
   return { secret, prefix }
 }
 
@@ -29,7 +30,8 @@ async function hashSecret(secret: string): Promise<string> {
 export const appSecretsRouter = createTRPCRouter({
   // List secrets for an app (only shows prefix, not the actual secret)
   list: protectedProcedure.input(z.object({ appId: z.string().uuid() })).query(async ({ ctx, input }) => {
-    await checkAppAccess(ctx.user.id, input.appId, ['admin'])
+    const walletUser = await getOrCreateWalletUser(ctx.user.id)
+    await checkAppAccess(input.appId, walletUser.id, ['owner', 'admin'])
 
     const secrets = await db
       .select({
@@ -49,7 +51,8 @@ export const appSecretsRouter = createTRPCRouter({
 
   // Create a new secret for an app
   create: protectedProcedure.input(z.object({ appId: z.string().uuid() })).mutation(async ({ ctx, input }) => {
-    await checkAppAccess(ctx.user.id, input.appId, ['admin'])
+    const walletUser = await getOrCreateWalletUser(ctx.user.id)
+    await checkAppAccess(input.appId, walletUser.id, ['owner', 'admin'])
 
     const { secret, prefix } = generateSecret()
     const secretHash = await hashSecret(secret)
@@ -81,7 +84,8 @@ export const appSecretsRouter = createTRPCRouter({
       throw new TRPCError({ code: 'NOT_FOUND', message: 'Secret not found' })
     }
 
-    await checkAppAccess(ctx.user.id, existingSecret[0].appId, ['admin'])
+    const walletUser = await getOrCreateWalletUser(ctx.user.id)
+    await checkAppAccess(existingSecret[0].appId, walletUser.id, ['owner', 'admin'])
 
     // Mark old secret as rotated
     await db.update(appSecrets).set({ status: 'rotated', rotatedAt: new Date() }).where(eq(appSecrets.id, input.id))
@@ -116,46 +120,11 @@ export const appSecretsRouter = createTRPCRouter({
       throw new TRPCError({ code: 'NOT_FOUND', message: 'Secret not found' })
     }
 
-    await checkAppAccess(ctx.user.id, existingSecret[0].appId, ['admin'])
+    const walletUser = await getOrCreateWalletUser(ctx.user.id)
+    await checkAppAccess(existingSecret[0].appId, walletUser.id, ['owner', 'admin'])
 
     await db.update(appSecrets).set({ status: 'revoked' }).where(eq(appSecrets.id, input.id))
 
     return { success: true }
   }),
 })
-
-// Helper to check if user has access to an app with required role
-async function checkAppAccess(authUserId: string, appId: string, requiredRoles?: string[]) {
-  // Get wallet user
-  const walletUser = await db.select().from(walletUsers).where(eq(walletUsers.externalSub, authUserId)).limit(1)
-
-  if (!walletUser[0]) {
-    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'User not found' })
-  }
-
-  // Check if owner
-  const app = await db.select().from(apps).where(eq(apps.id, appId)).limit(1)
-
-  if (!app[0]) {
-    throw new TRPCError({ code: 'NOT_FOUND', message: 'App not found' })
-  }
-
-  if (app[0].ownerUserId === walletUser[0].id) {
-    return // Owner has full access
-  }
-
-  // Check membership
-  const membership = await db
-    .select()
-    .from(appMembers)
-    .where(and(eq(appMembers.appId, appId), eq(appMembers.userId, walletUser[0].id)))
-    .limit(1)
-
-  if (!membership[0]) {
-    throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' })
-  }
-
-  if (requiredRoles && !requiredRoles.includes(membership[0].role)) {
-    throw new TRPCError({ code: 'FORBIDDEN', message: `Required role: ${requiredRoles.join(' or ')}` })
-  }
-}

@@ -5,3 +5,11 @@ export const authClient = createAuthClient({
 })
 
 export const { signIn, signUp, signOut, useSession } = authClient
+
+// User role type
+export type UserRole = 'user' | 'provider'
+
+// Helper to check if user is a provider/admin
+export function isProvider(role?: string): boolean {
+  return role === 'provider'
+}

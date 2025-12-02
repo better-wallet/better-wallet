@@ -2,7 +2,7 @@ import { TRPCError } from '@trpc/server'
 import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { db } from '@/server/db'
-import { appMembers, apps, walletUsers } from '@/server/db/schema'
+import { type AppSettings, appMembers, apps, walletUsers } from '@/server/db/schema'
 import { createTRPCRouter, protectedProcedure } from '../trpc'
 
 // App Settings schema
@@ -27,19 +27,75 @@ const appSettingsSchema = z.object({
   rate_limit: appRateLimitSettingsSchema.optional(),
 })
 
-export type AppSettings = z.infer<typeof appSettingsSchema>
+// Helper function to get or create wallet user from auth user
+async function getOrCreateWalletUser(dashboardUserId: string) {
+  const existing = await db.select().from(walletUsers).where(eq(walletUsers.dashboardUserId, dashboardUserId)).limit(1)
+
+  if (existing[0]) {
+    return existing[0]
+  }
+
+  const [newUser] = await db
+    .insert(walletUsers)
+    .values({
+      dashboardUserId,
+    })
+    .returning()
+
+  return newUser
+}
+
+// Helper to check app access
+async function checkAppAccess(
+  appId: string,
+  walletUserId: string,
+  requiredRoles?: string[]
+): Promise<{ app: typeof apps.$inferSelect; role: 'owner' | 'admin' | 'developer' | 'viewer' }> {
+  const app = await db.select().from(apps).where(eq(apps.id, appId)).limit(1)
+
+  if (!app[0]) {
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'App not found' })
+  }
+
+  if (app[0].status === 'deleted') {
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'App not found' })
+  }
+
+  // Check if owner
+  if (app[0].ownerId === walletUserId) {
+    return { app: app[0], role: 'owner' }
+  }
+
+  // Check membership
+  const membership = await db
+    .select()
+    .from(appMembers)
+    .where(and(eq(appMembers.appId, appId), eq(appMembers.userId, walletUserId)))
+    .limit(1)
+
+  if (!membership[0]) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' })
+  }
+
+  const role = membership[0].role as 'admin' | 'developer' | 'viewer'
+
+  if (requiredRoles && !requiredRoles.includes(role) && !requiredRoles.includes('owner')) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'Insufficient permissions' })
+  }
+
+  return { app: app[0], role }
+}
 
 export const appsRouter = createTRPCRouter({
   // List apps the user owns or is a member of
   list: protectedProcedure.query(async ({ ctx }) => {
-    // First, find or create the wallet user based on the session user
-    const walletUser = await getOrCreateWalletUser(ctx.user.id, ctx.user.email)
+    const walletUser = await getOrCreateWalletUser(ctx.user.id)
 
     // Get apps where user is owner
     const ownedApps = await db
       .select()
       .from(apps)
-      .where(and(eq(apps.ownerUserId, walletUser.id), eq(apps.status, 'active')))
+      .where(and(eq(apps.ownerId, walletUser.id), eq(apps.status, 'active')))
 
     // Get apps where user is a member
     const memberApps = await db
@@ -62,30 +118,9 @@ export const appsRouter = createTRPCRouter({
 
   // Get a specific app by ID
   get: protectedProcedure.input(z.object({ id: z.string().uuid() })).query(async ({ ctx, input }) => {
-    const walletUser = await getOrCreateWalletUser(ctx.user.id, ctx.user.email)
-
-    // Check if user is owner or member
-    const app = await db.select().from(apps).where(eq(apps.id, input.id)).limit(1)
-
-    if (!app[0]) {
-      throw new TRPCError({ code: 'NOT_FOUND', message: 'App not found' })
-    }
-
-    // Check access
-    const isOwner = app[0].ownerUserId === walletUser.id
-    if (!isOwner) {
-      const membership = await db
-        .select()
-        .from(appMembers)
-        .where(and(eq(appMembers.appId, input.id), eq(appMembers.userId, walletUser.id)))
-        .limit(1)
-
-      if (!membership[0]) {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'Access denied' })
-      }
-    }
-
-    return app[0]
+    const walletUser = await getOrCreateWalletUser(ctx.user.id)
+    const { app, role } = await checkAppAccess(input.id, walletUser.id)
+    return { ...app, role }
   }),
 
   // Create a new app
@@ -97,14 +132,14 @@ export const appsRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const walletUser = await getOrCreateWalletUser(ctx.user.id, ctx.user.email)
+      const walletUser = await getOrCreateWalletUser(ctx.user.id)
 
       const [newApp] = await db
         .insert(apps)
         .values({
           name: input.name,
           description: input.description,
-          ownerUserId: walletUser.id,
+          ownerId: walletUser.id,
         })
         .returning()
 
@@ -118,33 +153,11 @@ export const appsRouter = createTRPCRouter({
         id: z.string().uuid(),
         name: z.string().min(1).max(100).optional(),
         description: z.string().max(500).optional(),
-        settings: appSettingsSchema.optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const walletUser = await getOrCreateWalletUser(ctx.user.id, ctx.user.email)
-
-      // Check ownership
-      const app = await db.select().from(apps).where(eq(apps.id, input.id)).limit(1)
-
-      if (!app[0]) {
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'App not found' })
-      }
-
-      if (app[0].ownerUserId !== walletUser.id) {
-        // Check if user is admin member
-        const membership = await db
-          .select()
-          .from(appMembers)
-          .where(
-            and(eq(appMembers.appId, input.id), eq(appMembers.userId, walletUser.id), eq(appMembers.role, 'admin'))
-          )
-          .limit(1)
-
-        if (!membership[0]) {
-          throw new TRPCError({ code: 'FORBIDDEN', message: 'Only owner or admin can update app' })
-        }
-      }
+      const walletUser = await getOrCreateWalletUser(ctx.user.id)
+      await checkAppAccess(input.id, walletUser.id, ['owner', 'admin'])
 
       const updateData: Partial<typeof apps.$inferInsert> = {
         updatedAt: new Date(),
@@ -152,7 +165,6 @@ export const appsRouter = createTRPCRouter({
 
       if (input.name !== undefined) updateData.name = input.name
       if (input.description !== undefined) updateData.description = input.description
-      if (input.settings !== undefined) updateData.settings = input.settings
 
       const [updatedApp] = await db.update(apps).set(updateData).where(eq(apps.id, input.id)).returning()
 
@@ -168,49 +180,24 @@ export const appsRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const walletUser = await getOrCreateWalletUser(ctx.user.id, ctx.user.email)
-
-      const app = await db.select().from(apps).where(eq(apps.id, input.id)).limit(1)
-
-      if (!app[0]) {
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'App not found' })
-      }
-
-      if (app[0].ownerUserId !== walletUser.id) {
-        const membership = await db
-          .select()
-          .from(appMembers)
-          .where(
-            and(eq(appMembers.appId, input.id), eq(appMembers.userId, walletUser.id), eq(appMembers.role, 'admin'))
-          )
-          .limit(1)
-
-        if (!membership[0]) {
-          throw new TRPCError({ code: 'FORBIDDEN', message: 'Only owner or admin can update settings' })
-        }
-      }
+      const walletUser = await getOrCreateWalletUser(ctx.user.id)
+      await checkAppAccess(input.id, walletUser.id, ['owner', 'admin'])
 
       const [updatedApp] = await db
         .update(apps)
-        .set({ settings: input.settings, updatedAt: new Date() })
+        .set({ settings: input.settings as AppSettings, updatedAt: new Date() })
         .where(eq(apps.id, input.id))
         .returning()
 
       return updatedApp
     }),
 
-  // Delete an app (soft delete by setting status to 'deleted')
+  // Delete an app (soft delete)
   delete: protectedProcedure.input(z.object({ id: z.string().uuid() })).mutation(async ({ ctx, input }) => {
-    const walletUser = await getOrCreateWalletUser(ctx.user.id, ctx.user.email)
+    const walletUser = await getOrCreateWalletUser(ctx.user.id)
+    const { role } = await checkAppAccess(input.id, walletUser.id, ['owner'])
 
-    // Only owner can delete
-    const app = await db.select().from(apps).where(eq(apps.id, input.id)).limit(1)
-
-    if (!app[0]) {
-      throw new TRPCError({ code: 'NOT_FOUND', message: 'App not found' })
-    }
-
-    if (app[0].ownerUserId !== walletUser.id) {
+    if (role !== 'owner') {
       throw new TRPCError({ code: 'FORBIDDEN', message: 'Only owner can delete app' })
     }
 
@@ -220,22 +207,5 @@ export const appsRouter = createTRPCRouter({
   }),
 })
 
-// Helper function to get or create wallet user from auth user
-async function getOrCreateWalletUser(authUserId: string, email: string) {
-  // Try to find existing wallet user by external_sub (auth user id)
-  const existing = await db.select().from(walletUsers).where(eq(walletUsers.externalSub, authUserId)).limit(1)
-
-  if (existing[0]) {
-    return existing[0]
-  }
-
-  // Create new wallet user
-  const [newUser] = await db
-    .insert(walletUsers)
-    .values({
-      externalSub: authUserId,
-    })
-    .returning()
-
-  return newUser
-}
+// Export helper for other routers
+export { getOrCreateWalletUser, checkAppAccess }
