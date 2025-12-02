@@ -1,6 +1,6 @@
 'use client'
 
-import { Building2, Cog, FileText, Key, LayoutDashboard, Plus, Shield, Users, Wallet } from 'lucide-react'
+import { Building2, Cog, FileText, Key, LayoutDashboard, Plus, Shield, UserCircle, Users, Wallet } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
@@ -63,6 +63,11 @@ export function AppSidebar({ currentAppId, currentAppName, isAdmin }: AppSidebar
           title: 'Condition Sets',
           url: `/apps/${currentAppId}/condition-sets`,
           icon: FileText,
+        },
+        {
+          title: 'Users',
+          url: `/apps/${currentAppId}/users`,
+          icon: UserCircle,
         },
       ]
     : []

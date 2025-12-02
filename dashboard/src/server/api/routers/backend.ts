@@ -624,13 +624,23 @@ export const backendRouter = createTRPCRouter({
           limit: input.limit,
         })
 
-        return {
-          data: userList.map((u) => ({
-            id: u.id,
-            external_sub: u.externalSub,
-            created_at: u.createdAt.getTime(),
-          })),
-        }
+        // Get wallet counts for each user
+        const usersWithWalletCounts = await Promise.all(
+          userList.map(async (u) => {
+            const walletCount = await db
+              .select({ count: sql<number>`count(*)` })
+              .from(schema.wallets)
+              .where(eq(schema.wallets.userId, u.id))
+            return {
+              id: u.id,
+              external_sub: u.externalSub,
+              created_at: u.createdAt.getTime(),
+              wallet_count: Number(walletCount[0]?.count ?? 0),
+            }
+          })
+        )
+
+        return { data: usersWithWalletCounts }
       }),
 
     get: protectedProcedure
@@ -646,10 +656,22 @@ export const backendRouter = createTRPCRouter({
           throw new Error('User not found')
         }
 
+        // Get user's wallets
+        const userWallets = await db.query.wallets.findMany({
+          where: eq(schema.wallets.userId, user.id),
+          orderBy: desc(schema.wallets.createdAt),
+        })
+
         return {
           id: user.id,
           external_sub: user.externalSub,
           created_at: user.createdAt.getTime(),
+          wallets: userWallets.map((w) => ({
+            id: w.id,
+            address: w.address,
+            chain_type: w.chainType,
+            created_at: w.createdAt.getTime(),
+          })),
         }
       }),
   }),
