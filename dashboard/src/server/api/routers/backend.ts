@@ -374,6 +374,62 @@ export const backendRouter = createTRPCRouter({
 
         return { success: true }
       }),
+
+    updatePolicies: protectedProcedure
+      .input(
+        z.object({
+          appId: z.string(),
+          walletId: z.string(),
+          policyIds: z.array(z.string()),
+        })
+      )
+      .mutation(async ({ ctx, input }) => {
+        const { role } = await checkAppAccess(ctx.session.user.id, input.appId)
+        if (role === 'viewer') {
+          throw new Error('Permission denied')
+        }
+
+        // Verify wallet belongs to this app
+        const wallet = await db.query.wallets.findFirst({
+          where: and(eq(schema.wallets.id, input.walletId), eq(schema.wallets.appId, input.appId)),
+        })
+
+        if (!wallet) {
+          throw new Error('Wallet not found')
+        }
+
+        // Verify all policies belong to this app
+        if (input.policyIds.length > 0) {
+          const policies = await db.query.policies.findMany({
+            where: and(
+              eq(schema.policies.appId, input.appId),
+              sql`${schema.policies.id} = ANY(ARRAY[${sql.join(
+                input.policyIds.map((id) => sql`${id}::uuid`),
+                sql`, `
+              )}])`
+            ),
+          })
+
+          if (policies.length !== input.policyIds.length) {
+            throw new Error('One or more policies not found in this app')
+          }
+        }
+
+        // Delete existing wallet-policy associations
+        await db.delete(schema.walletPolicies).where(eq(schema.walletPolicies.walletId, input.walletId))
+
+        // Insert new associations
+        if (input.policyIds.length > 0) {
+          await db.insert(schema.walletPolicies).values(
+            input.policyIds.map((policyId) => ({
+              walletId: input.walletId,
+              policyId,
+            }))
+          )
+        }
+
+        return { success: true }
+      }),
   }),
 
   // ==================== Policies ====================
