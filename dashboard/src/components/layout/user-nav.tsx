@@ -1,6 +1,6 @@
 'use client'
 
-import { LogOut, Settings, User } from 'lucide-react'
+import { LogOut, Settings, Shield } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
@@ -21,11 +21,14 @@ interface UserNavProps {
     name: string
     email: string
     image?: string | null
+    role?: string
   }
+  isAdminRoute?: boolean
 }
 
-export function UserNav({ user }: UserNavProps) {
+export function UserNav({ user, isAdminRoute }: UserNavProps) {
   const router = useRouter()
+  const isAdmin = user.role === 'provider'
 
   const handleSignOut = async () => {
     await signOut()
@@ -59,13 +62,15 @@ export function UserNav({ user }: UserNavProps) {
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
           <DropdownMenuItem onClick={() => router.push('/settings')}>
-            <User className="mr-2 h-4 w-4" />
-            <span>Profile</span>
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => router.push('/settings')}>
             <Settings className="mr-2 h-4 w-4" />
             <span>Settings</span>
           </DropdownMenuItem>
+          {isAdmin && (
+            <DropdownMenuItem onClick={() => router.push(isAdminRoute ? '/apps' : '/admin')}>
+              <Shield className="mr-2 h-4 w-4" />
+              <span>{isAdminRoute ? 'Back to Apps' : 'Admin Console'}</span>
+            </DropdownMenuItem>
+          )}
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={handleSignOut}>

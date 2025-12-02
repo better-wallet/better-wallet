@@ -1,6 +1,6 @@
 'use client'
 
-import { Building2, Cog, FileText, Key, LayoutDashboard, Plus, Shield, UserCircle, Users, Wallet } from 'lucide-react'
+import { ArrowLeftRight, BarChart3, Building2, Cog, FileText, FlaskConical, Key, LayoutDashboard, Plus, Shield, UserCircle, Users, Wallet } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
@@ -21,9 +21,10 @@ interface AppSidebarProps {
   currentAppId?: string
   currentAppName?: string
   isAdmin?: boolean
+  isAdminRoute?: boolean
 }
 
-export function AppSidebar({ currentAppId, currentAppName, isAdmin }: AppSidebarProps) {
+export function AppSidebar({ currentAppId, currentAppName, isAdmin, isAdminRoute }: AppSidebarProps) {
   const pathname = usePathname()
 
   // Global nav items (when no app is selected)
@@ -45,14 +46,29 @@ export function AppSidebar({ currentAppId, currentAppName, isAdmin }: AppSidebar
           exact: true,
         },
         {
+          title: 'Analytics',
+          url: `/apps/${currentAppId}/analytics`,
+          icon: BarChart3,
+        },
+        {
           title: 'Wallets',
           url: `/apps/${currentAppId}/wallets`,
           icon: Wallet,
         },
         {
+          title: 'Transactions',
+          url: `/apps/${currentAppId}/transactions`,
+          icon: ArrowLeftRight,
+        },
+        {
           title: 'Policies',
           url: `/apps/${currentAppId}/policies`,
           icon: Shield,
+        },
+        {
+          title: 'Policy Tester',
+          url: `/apps/${currentAppId}/policies/test`,
+          icon: FlaskConical,
         },
         {
           title: 'Auth Keys',
@@ -101,29 +117,28 @@ export function AppSidebar({ currentAppId, currentAppName, isAdmin }: AppSidebar
   const adminNavItems = isAdmin
     ? [
         {
-          title: 'Admin Dashboard',
+          title: 'Dashboard',
           url: '/admin',
           icon: LayoutDashboard,
+          exact: true,
         },
         {
           title: 'All Apps',
           url: '/admin/apps',
           icon: Building2,
+          exact: false,
         },
         {
           title: 'System Health',
           url: '/admin/health',
           icon: Cog,
+          exact: false,
         },
         {
           title: 'Configuration',
           url: '/admin/config',
           icon: Cog,
-        },
-        {
-          title: 'Global Audit',
-          url: '/admin/audit',
-          icon: FileText,
+          exact: false,
         },
       ]
     : []
@@ -135,6 +150,40 @@ export function AppSidebar({ currentAppId, currentAppName, isAdmin }: AppSidebar
     return pathname.startsWith(url)
   }
 
+  // When on admin routes, show only admin navigation
+  if (isAdminRoute && isAdmin) {
+    return (
+      <Sidebar>
+        <SidebarHeader className="border-b px-6 py-4">
+          <Link href="/admin" className="flex items-center gap-2">
+            <Wallet className="h-6 w-6" />
+            <span className="font-semibold text-lg">Better Wallet</span>
+          </Link>
+        </SidebarHeader>
+        <SidebarContent>
+          <SidebarGroup>
+            <SidebarGroupLabel>Administration</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {adminNavItems.map((item) => (
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton asChild isActive={isActive(item.url, item.exact)}>
+                      <Link href={item.url}>
+                        <item.icon className="h-4 w-4" />
+                        <span>{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        </SidebarContent>
+      </Sidebar>
+    )
+  }
+
+  // Normal user view
   return (
     <Sidebar>
       <SidebarHeader className="border-b px-6 py-4">
@@ -214,24 +263,21 @@ export function AppSidebar({ currentAppId, currentAppName, isAdmin }: AppSidebar
           </>
         )}
 
-        {/* Admin Navigation */}
-        {isAdmin && adminNavItems.length > 0 && (
+        {/* Admin Link - only show if user has admin privileges */}
+        {isAdmin && (
           <>
             <SidebarSeparator />
             <SidebarGroup>
-              <SidebarGroupLabel>Admin</SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu>
-                  {adminNavItems.map((item) => (
-                    <SidebarMenuItem key={item.title}>
-                      <SidebarMenuButton asChild isActive={isActive(item.url)}>
-                        <Link href={item.url}>
-                          <item.icon className="h-4 w-4" />
-                          <span>{item.title}</span>
-                        </Link>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  ))}
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild>
+                      <Link href="/admin" className="text-muted-foreground hover:text-foreground">
+                        <LayoutDashboard className="h-4 w-4" />
+                        <span>Admin Console</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
                 </SidebarMenu>
               </SidebarGroupContent>
             </SidebarGroup>

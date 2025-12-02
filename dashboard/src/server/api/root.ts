@@ -1,3 +1,4 @@
+import { adminRouter } from './routers/admin'
 import { appMembersRouter } from './routers/app-members'
 import { appSecretsRouter } from './routers/app-secrets'
 import { appsRouter } from './routers/apps'
@@ -12,6 +13,9 @@ export const appRouter = createTRPCRouter({
 
   // Backend-managed resources (proxied to Go API)
   backend: backendRouter,
+
+  // Admin-only operations
+  admin: adminRouter,
 })
 
 export type AppRouter = typeof appRouter

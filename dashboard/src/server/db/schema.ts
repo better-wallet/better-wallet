@@ -289,6 +289,30 @@ export const auditLogs = pgTable('audit_logs', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
+// Transactions
+export const transactions = pgTable('transactions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  walletId: uuid('wallet_id')
+    .notNull()
+    .references(() => wallets.id, { onDelete: 'cascade' }),
+  chainId: bigint('chain_id', { mode: 'number' }).notNull(),
+  txHash: text('tx_hash'),
+  status: text('status').notNull().default('pending'), // pending, submitted, confirmed, failed
+  method: text('method').notNull(), // eth_sendTransaction, eth_signTransaction
+  toAddress: text('to_address'),
+  value: text('value'), // wei as string
+  data: text('data'),
+  nonce: bigint('nonce', { mode: 'number' }),
+  gasLimit: bigint('gas_limit', { mode: 'number' }),
+  maxFeePerGas: text('max_fee_per_gas'),
+  maxPriorityFeePerGas: text('max_priority_fee_per_gas'),
+  signedTx: text('signed_tx'), // hex encoded
+  errorMessage: text('error_message'),
+  appId: uuid('app_id').references(() => apps.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
 // Idempotency keys
 export const idempotencyKeys = pgTable('idempotency_keys', {
   key: text('key').primaryKey(),
@@ -311,3 +335,4 @@ export type Policy = typeof policies.$inferSelect
 export type SessionSigner = typeof sessionSigners.$inferSelect
 export type ConditionSet = typeof conditionSets.$inferSelect
 export type AuditLog = typeof auditLogs.$inferSelect
+export type Transaction = typeof transactions.$inferSelect

@@ -4,6 +4,132 @@ import { db } from '@/server/db'
 import * as schema from '@/server/db/schema'
 import { createTRPCRouter, protectedProcedure } from '../trpc'
 
+// Policy evaluation helper types
+interface TestContext {
+  method: string
+  chainType?: string
+  to?: string
+  value?: string
+  data?: string
+  chainId?: number
+  decodedCalldata?: Record<string, unknown>
+  typedDataDomain?: Record<string, unknown>
+  typedDataMessage?: Record<string, unknown>
+  personalMessage?: string
+}
+
+// Helper to get field value from test context
+function getFieldValue(fieldSource: string, field: string, ctx: TestContext): unknown {
+  switch (fieldSource) {
+    case 'ethereum_transaction':
+      switch (field) {
+        case 'to':
+          return ctx.to?.toLowerCase()
+        case 'value':
+          return ctx.value
+        case 'data':
+          return ctx.data
+        case 'chain_id':
+          return ctx.chainId
+        case 'from':
+          return undefined // Not available in test context
+        default:
+          return undefined
+      }
+    case 'ethereum_calldata':
+      return ctx.decodedCalldata?.[field]
+    case 'ethereum_typed_data_domain':
+      return ctx.typedDataDomain?.[field]
+    case 'ethereum_typed_data_message':
+      return ctx.typedDataMessage?.[field]
+    case 'ethereum_message':
+      if (field === 'content') return ctx.personalMessage
+      return undefined
+    case 'system':
+      if (field === 'current_unix_timestamp') return Math.floor(Date.now() / 1000)
+      return undefined
+    default:
+      return undefined
+  }
+}
+
+// Helper to evaluate a condition
+function evaluateCondition(operator: string, actual: unknown, expected: unknown): { matched: boolean } {
+  // Handle null/undefined
+  if (actual === undefined || actual === null) {
+    if (operator === 'eq') return { matched: expected === null || expected === undefined }
+    if (operator === 'neq') return { matched: expected !== null && expected !== undefined }
+    return { matched: false }
+  }
+
+  switch (operator) {
+    case 'eq':
+      // Case-insensitive comparison for addresses
+      if (typeof actual === 'string' && typeof expected === 'string') {
+        return { matched: actual.toLowerCase() === expected.toLowerCase() }
+      }
+      return { matched: actual === expected }
+
+    case 'neq':
+      if (typeof actual === 'string' && typeof expected === 'string') {
+        return { matched: actual.toLowerCase() !== expected.toLowerCase() }
+      }
+      return { matched: actual !== expected }
+
+    case 'lt':
+      return { matched: compareBigInt(actual, expected) < 0 }
+
+    case 'lte':
+      return { matched: compareBigInt(actual, expected) <= 0 }
+
+    case 'gt':
+      return { matched: compareBigInt(actual, expected) > 0 }
+
+    case 'gte':
+      return { matched: compareBigInt(actual, expected) >= 0 }
+
+    case 'in':
+      if (!Array.isArray(expected)) return { matched: false }
+      const actualLower = typeof actual === 'string' ? actual.toLowerCase() : actual
+      return {
+        matched: expected.some((v) => {
+          const vLower = typeof v === 'string' ? v.toLowerCase() : v
+          return actualLower === vLower
+        }),
+      }
+
+    case 'in_condition_set':
+      // For simplicity, treat expected as the condition set values array
+      if (!Array.isArray(expected)) return { matched: false }
+      const actualLower2 = typeof actual === 'string' ? actual.toLowerCase() : actual
+      return {
+        matched: expected.some((v) => {
+          const vLower = typeof v === 'string' ? v.toLowerCase() : v
+          return actualLower2 === vLower
+        }),
+      }
+
+    default:
+      return { matched: false }
+  }
+}
+
+// Helper to compare values as BigInt (for wei values)
+function compareBigInt(a: unknown, b: unknown): number {
+  try {
+    const aBig = BigInt(String(a))
+    const bBig = BigInt(String(b))
+    if (aBig < bBig) return -1
+    if (aBig > bBig) return 1
+    return 0
+  } catch {
+    // Fall back to number comparison
+    const aNum = Number(a)
+    const bNum = Number(b)
+    return aNum - bNum
+  }
+}
+
 // Helper to check if user has access to an app
 async function checkAppAccess(userId: string, appId: string) {
   // Find the wallet user for this dashboard user
@@ -54,19 +180,122 @@ export const backendRouter = createTRPCRouter({
   stats: protectedProcedure.input(z.object({ appId: z.string() })).query(async ({ ctx, input }) => {
     await checkAppAccess(ctx.session.user.id, input.appId)
 
-    const [walletsCount, policiesCount, usersCount] = await Promise.all([
+    const [walletsCount, policiesCount, usersCount, transactionsCount] = await Promise.all([
       db.select({ count: sql<number>`count(*)` }).from(schema.wallets).where(eq(schema.wallets.appId, input.appId)),
       db.select({ count: sql<number>`count(*)` }).from(schema.policies).where(eq(schema.policies.appId, input.appId)),
       db.select({ count: sql<number>`count(*)` }).from(schema.users).where(eq(schema.users.appId, input.appId)),
+      db.select({ count: sql<number>`count(*)` }).from(schema.transactions).where(eq(schema.transactions.appId, input.appId)),
     ])
 
     return {
       wallets_count: Number(walletsCount[0]?.count ?? 0),
       policies_count: Number(policiesCount[0]?.count ?? 0),
       users_count: Number(usersCount[0]?.count ?? 0),
-      transactions_count: 0, // TODO: Add transactions table if needed
+      transactions_count: Number(transactionsCount[0]?.count ?? 0),
     }
   }),
+
+  // Analytics - detailed stats with time series
+  analytics: protectedProcedure
+    .input(z.object({ appId: z.string(), days: z.number().optional().default(30) }))
+    .query(async ({ ctx, input }) => {
+      await checkAppAccess(ctx.session.user.id, input.appId)
+
+      const startDate = new Date()
+      startDate.setDate(startDate.getDate() - input.days)
+
+      // Get daily user registrations
+      const dailyUsers = await db.execute(sql`
+        SELECT DATE(created_at) as date, COUNT(*) as count
+        FROM users
+        WHERE app_id = ${input.appId}::uuid AND created_at >= ${startDate.toISOString()}
+        GROUP BY DATE(created_at)
+        ORDER BY date ASC
+      `)
+
+      // Get daily wallet creations
+      const dailyWallets = await db.execute(sql`
+        SELECT DATE(created_at) as date, COUNT(*) as count
+        FROM wallets
+        WHERE app_id = ${input.appId}::uuid AND created_at >= ${startDate.toISOString()}
+        GROUP BY DATE(created_at)
+        ORDER BY date ASC
+      `)
+
+      // Get daily transactions
+      const dailyTransactions = await db.execute(sql`
+        SELECT DATE(created_at) as date, COUNT(*) as count, status
+        FROM transactions
+        WHERE app_id = ${input.appId}::uuid AND created_at >= ${startDate.toISOString()}
+        GROUP BY DATE(created_at), status
+        ORDER BY date ASC
+      `)
+
+      // Get transaction volume (sum of values)
+      const dailyVolume = await db.execute(sql`
+        SELECT DATE(created_at) as date, SUM(CAST(NULLIF(value, '') AS NUMERIC)) as volume
+        FROM transactions
+        WHERE app_id = ${input.appId}::uuid AND created_at >= ${startDate.toISOString()} AND status = 'confirmed'
+        GROUP BY DATE(created_at)
+        ORDER BY date ASC
+      `)
+
+      // Get wallet distribution by chain type
+      const walletsByChain = await db.execute(sql`
+        SELECT chain_type, COUNT(*) as count
+        FROM wallets
+        WHERE app_id = ${input.appId}::uuid
+        GROUP BY chain_type
+      `)
+
+      // Get transaction status distribution
+      const transactionsByStatus = await db.execute(sql`
+        SELECT status, COUNT(*) as count
+        FROM transactions
+        WHERE app_id = ${input.appId}::uuid
+        GROUP BY status
+      `)
+
+      // Get policy decisions from audit logs
+      const policyDecisions = await db.execute(sql`
+        SELECT policy_result, COUNT(*) as count
+        FROM audit_logs
+        WHERE app_id = ${input.appId}::uuid AND policy_result IS NOT NULL AND created_at >= ${startDate.toISOString()}
+        GROUP BY policy_result
+      `)
+
+      return {
+        dailyUsers: (dailyUsers as unknown as { date: string; count: string }[]).map((r) => ({
+          date: r.date,
+          count: Number(r.count),
+        })),
+        dailyWallets: (dailyWallets as unknown as { date: string; count: string }[]).map((r) => ({
+          date: r.date,
+          count: Number(r.count),
+        })),
+        dailyTransactions: (dailyTransactions as unknown as { date: string; count: string; status: string }[]).map((r) => ({
+          date: r.date,
+          count: Number(r.count),
+          status: r.status,
+        })),
+        dailyVolume: (dailyVolume as unknown as { date: string; volume: string }[]).map((r) => ({
+          date: r.date,
+          volume: r.volume ? Number(r.volume) : 0,
+        })),
+        walletsByChain: (walletsByChain as unknown as { chain_type: string; count: string }[]).map((r) => ({
+          chainType: r.chain_type,
+          count: Number(r.count),
+        })),
+        transactionsByStatus: (transactionsByStatus as unknown as { status: string; count: string }[]).map((r) => ({
+          status: r.status,
+          count: Number(r.count),
+        })),
+        policyDecisions: (policyDecisions as unknown as { policy_result: string; count: string }[]).map((r) => ({
+          result: r.policy_result,
+          count: Number(r.count),
+        })),
+      }
+    }),
 
   // ==================== Wallets ====================
   wallets: createTRPCRouter({
@@ -735,5 +964,292 @@ export const backendRouter = createTRPCRouter({
 
         return { success: true }
       }),
+  }),
+
+  // ==================== Policy Testing ====================
+  policyTest: createTRPCRouter({
+    simulate: protectedProcedure
+      .input(
+        z.object({
+          appId: z.string(),
+          // Policy rules to test
+          rules: z.array(
+            z.object({
+              name: z.string(),
+              method: z.string(),
+              conditions: z.array(
+                z.object({
+                  field_source: z.string(),
+                  field: z.string(),
+                  operator: z.string(),
+                  value: z.unknown(),
+                })
+              ),
+              action: z.enum(['ALLOW', 'DENY']),
+            })
+          ),
+          // Test context
+          testContext: z.object({
+            method: z.string(), // eth_sendTransaction, eth_signTypedData_v4, etc.
+            chainType: z.string().optional().default('ethereum'),
+            // Transaction fields
+            to: z.string().optional(),
+            value: z.string().optional(), // wei as string
+            data: z.string().optional(), // hex calldata
+            chainId: z.number().optional(),
+            // For decoded calldata
+            decodedCalldata: z.record(z.string(), z.unknown()).optional(),
+            // For typed data
+            typedDataDomain: z.record(z.string(), z.unknown()).optional(),
+            typedDataMessage: z.record(z.string(), z.unknown()).optional(),
+            // For personal sign
+            personalMessage: z.string().optional(),
+          }),
+        })
+      )
+      .mutation(async ({ ctx, input }) => {
+        await checkAppAccess(ctx.session.user.id, input.appId)
+
+        // Simulate policy evaluation on the frontend
+        // This mimics the Go backend's policy engine logic
+        const { rules, testContext } = input
+
+        interface MatchResult {
+          ruleIndex: number
+          ruleName: string
+          action: 'ALLOW' | 'DENY'
+          matchedConditions: string[]
+        }
+
+        const results: {
+          decision: 'ALLOW' | 'DENY'
+          reason: string
+          matchedRule: MatchResult | null
+          evaluationTrace: { rule: string; matched: boolean; reason: string }[]
+        } = {
+          decision: 'DENY',
+          reason: 'No policy rule explicitly allows this action',
+          matchedRule: null,
+          evaluationTrace: [],
+        }
+
+        // Evaluate each rule
+        for (let i = 0; i < rules.length; i++) {
+          const rule = rules[i]
+
+          // Check method match
+          if (rule.method !== '*' && rule.method !== testContext.method) {
+            results.evaluationTrace.push({
+              rule: rule.name,
+              matched: false,
+              reason: `Method mismatch: rule expects "${rule.method}", got "${testContext.method}"`,
+            })
+            continue
+          }
+
+          // Evaluate conditions
+          let allConditionsMatch = true
+          const matchedConditions: string[] = []
+          let failReason = ''
+
+          for (const condition of rule.conditions) {
+            const fieldValue = getFieldValue(condition.field_source, condition.field, testContext)
+            const conditionResult = evaluateCondition(condition.operator, fieldValue, condition.value)
+
+            if (conditionResult.matched) {
+              matchedConditions.push(`${condition.field_source}.${condition.field} ${condition.operator} ${JSON.stringify(condition.value)}`)
+            } else {
+              allConditionsMatch = false
+              failReason = `Condition failed: ${condition.field_source}.${condition.field} ${condition.operator} ${JSON.stringify(condition.value)} (actual: ${JSON.stringify(fieldValue)})`
+              break
+            }
+          }
+
+          if (allConditionsMatch) {
+            results.decision = rule.action
+            results.reason = `Matched rule: ${rule.name}`
+            results.matchedRule = {
+              ruleIndex: i,
+              ruleName: rule.name,
+              action: rule.action,
+              matchedConditions,
+            }
+            results.evaluationTrace.push({
+              rule: rule.name,
+              matched: true,
+              reason: `All conditions matched, action: ${rule.action}`,
+            })
+            break // First matching rule wins
+          } else {
+            results.evaluationTrace.push({
+              rule: rule.name,
+              matched: false,
+              reason: failReason,
+            })
+          }
+        }
+
+        return results
+      }),
+  }),
+
+  // ==================== Transactions ====================
+  transactions: createTRPCRouter({
+    list: protectedProcedure
+      .input(
+        z.object({
+          appId: z.string(),
+          limit: z.number().min(1).max(100).optional().default(50),
+          status: z.enum(['pending', 'submitted', 'confirmed', 'failed']).optional(),
+          walletId: z.string().optional(),
+        })
+      )
+      .query(async ({ ctx, input }) => {
+        await checkAppAccess(ctx.session.user.id, input.appId)
+
+        const conditions = [eq(schema.transactions.appId, input.appId)]
+        if (input.status) {
+          conditions.push(eq(schema.transactions.status, input.status))
+        }
+        if (input.walletId) {
+          conditions.push(eq(schema.transactions.walletId, input.walletId))
+        }
+
+        const txList = await db.query.transactions.findMany({
+          where: and(...conditions),
+          orderBy: desc(schema.transactions.createdAt),
+          limit: input.limit,
+        })
+
+        // Get wallet addresses for each transaction
+        const walletIds = [...new Set(txList.map((tx) => tx.walletId))]
+        const walletMap = new Map<string, string>()
+
+        if (walletIds.length > 0) {
+          const walletsData = await db.query.wallets.findMany({
+            where: sql`${schema.wallets.id} = ANY(ARRAY[${sql.join(
+              walletIds.map((id) => sql`${id}::uuid`),
+              sql`, `
+            )}])`,
+          })
+          for (const w of walletsData) {
+            walletMap.set(w.id, w.address)
+          }
+        }
+
+        return {
+          data: txList.map((tx) => ({
+            id: tx.id,
+            wallet_id: tx.walletId,
+            wallet_address: walletMap.get(tx.walletId) ?? '',
+            chain_id: tx.chainId,
+            tx_hash: tx.txHash,
+            status: tx.status,
+            method: tx.method,
+            to_address: tx.toAddress,
+            value: tx.value,
+            data: tx.data,
+            nonce: tx.nonce,
+            gas_limit: tx.gasLimit,
+            max_fee_per_gas: tx.maxFeePerGas,
+            max_priority_fee_per_gas: tx.maxPriorityFeePerGas,
+            error_message: tx.errorMessage,
+            created_at: tx.createdAt.getTime(),
+            updated_at: tx.updatedAt.getTime(),
+          })),
+        }
+      }),
+
+    get: protectedProcedure
+      .input(z.object({ appId: z.string(), id: z.string() }))
+      .query(async ({ ctx, input }) => {
+        await checkAppAccess(ctx.session.user.id, input.appId)
+
+        const tx = await db.query.transactions.findFirst({
+          where: and(eq(schema.transactions.id, input.id), eq(schema.transactions.appId, input.appId)),
+        })
+
+        if (!tx) {
+          throw new Error('Transaction not found')
+        }
+
+        // Get wallet info
+        const wallet = await db.query.wallets.findFirst({
+          where: eq(schema.wallets.id, tx.walletId),
+        })
+
+        return {
+          id: tx.id,
+          wallet_id: tx.walletId,
+          wallet_address: wallet?.address ?? '',
+          chain_id: tx.chainId,
+          tx_hash: tx.txHash,
+          status: tx.status,
+          method: tx.method,
+          to_address: tx.toAddress,
+          value: tx.value,
+          data: tx.data,
+          nonce: tx.nonce,
+          gas_limit: tx.gasLimit,
+          max_fee_per_gas: tx.maxFeePerGas,
+          max_priority_fee_per_gas: tx.maxPriorityFeePerGas,
+          signed_tx: tx.signedTx,
+          error_message: tx.errorMessage,
+          created_at: tx.createdAt.getTime(),
+          updated_at: tx.updatedAt.getTime(),
+        }
+      }),
+
+    // Stats for analytics
+    stats: protectedProcedure.input(z.object({ appId: z.string() })).query(async ({ ctx, input }) => {
+      await checkAppAccess(ctx.session.user.id, input.appId)
+
+      const [total, pending, submitted, confirmed, failed] = await Promise.all([
+        db.select({ count: sql<number>`count(*)` }).from(schema.transactions).where(eq(schema.transactions.appId, input.appId)),
+        db
+          .select({ count: sql<number>`count(*)` })
+          .from(schema.transactions)
+          .where(and(eq(schema.transactions.appId, input.appId), eq(schema.transactions.status, 'pending'))),
+        db
+          .select({ count: sql<number>`count(*)` })
+          .from(schema.transactions)
+          .where(and(eq(schema.transactions.appId, input.appId), eq(schema.transactions.status, 'submitted'))),
+        db
+          .select({ count: sql<number>`count(*)` })
+          .from(schema.transactions)
+          .where(and(eq(schema.transactions.appId, input.appId), eq(schema.transactions.status, 'confirmed'))),
+        db
+          .select({ count: sql<number>`count(*)` })
+          .from(schema.transactions)
+          .where(and(eq(schema.transactions.appId, input.appId), eq(schema.transactions.status, 'failed'))),
+      ])
+
+      // Get daily transactions for last 7 days
+      const sevenDaysAgo = new Date()
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
+
+      const dailyTxs = await db.execute(sql`
+        SELECT
+          DATE(created_at) as date,
+          COUNT(*) as count
+        FROM transactions
+        WHERE app_id = ${input.appId}::uuid
+          AND created_at >= ${sevenDaysAgo.toISOString()}
+        GROUP BY DATE(created_at)
+        ORDER BY date ASC
+      `)
+
+      return {
+        total: Number(total[0]?.count ?? 0),
+        pending: Number(pending[0]?.count ?? 0),
+        submitted: Number(submitted[0]?.count ?? 0),
+        confirmed: Number(confirmed[0]?.count ?? 0),
+        failed: Number(failed[0]?.count ?? 0),
+        daily: (dailyTxs as unknown as { date: string; count: string }[]).map((row) => ({
+          date: row.date,
+          count: Number(row.count),
+        })),
+      }
+    }),
   }),
 })

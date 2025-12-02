@@ -1,6 +1,6 @@
 'use client'
 
-import { Activity, Building2, FileText, Settings } from 'lucide-react'
+import { Activity, Building2, Settings, Users } from 'lucide-react'
 import Link from 'next/link'
 
 import { PageHeader } from '@/components/layout/page-header'
@@ -9,9 +9,7 @@ import { trpc } from '@/lib/trpc/client'
 
 export default function AdminDashboardPage() {
   const { data: health } = trpc.backend.health.useQuery()
-  const { data: apps } = trpc.apps.list.useQuery()
-
-  const totalApps = apps ? apps.owned.length + apps.member.length : 0
+  const { data: stats } = trpc.admin.getSystemStats.useQuery()
 
   return (
     <div className="space-y-6">
@@ -49,7 +47,25 @@ export default function AdminDashboardPage() {
             <Building2 className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{totalApps}</div>
+            <div className="text-2xl font-bold">{stats?.totalApps ?? '-'}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Dashboard Users</CardTitle>
+            <Users className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{stats?.totalDashboardUsers ?? '-'}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Wallet Users</CardTitle>
+            <Users className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{stats?.totalWalletUsers ?? '-'}</div>
           </CardContent>
         </Card>
       </div>

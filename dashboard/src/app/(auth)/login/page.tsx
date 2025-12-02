@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { authClient, signIn } from '@/lib/auth/client'
+import { signIn } from '@/lib/auth/client'
 
 // In development, NEXT_PUBLIC_APP_URL is usually localhost
 const isDev = process.env.NEXT_PUBLIC_APP_URL?.includes('localhost') ?? false
@@ -49,41 +49,27 @@ export default function LoginPage() {
     }
   }
 
+  // Dev login uses pre-seeded users (run `bun run db:seed` first)
   const handleDevLogin = async (role: 'user' | 'admin') => {
     setError('')
     setDevLoading(true)
 
     const devUser =
       role === 'admin'
-        ? { email: 'admin@example.com', password: 'adminpassword123', name: 'Admin User' }
-        : { email: 'dev@example.com', password: 'devpassword123', name: 'Dev User' }
+        ? { email: 'admin@example.com', password: 'adminpassword123' }
+        : { email: 'dev@example.com', password: 'devpassword123' }
 
     try {
-      // Try to sign in first
-      const signInResult = await signIn.email({
+      const result = await signIn.email({
         email: devUser.email,
         password: devUser.password,
       })
 
-      if (!signInResult.error) {
-        router.push('/apps')
-        router.refresh()
+      if (result.error) {
+        setError('Dev user not found. Run `bun run db:seed` first.')
         return
       }
 
-      // If sign in failed, user might not exist - try to sign up
-      const signUpResult = await authClient.signUp.email({
-        email: devUser.email,
-        password: devUser.password,
-        name: devUser.name,
-      })
-
-      if (signUpResult.error) {
-        setError(signUpResult.error.message || 'Failed to create dev user')
-        return
-      }
-
-      // Sign up successful, user is now logged in
       router.push('/apps')
       router.refresh()
     } catch (err) {
@@ -188,6 +174,10 @@ export default function LoginPage() {
                 <span className="bg-background px-2 text-yellow-600">Dev Mode</span>
               </div>
             </div>
+
+            <p className="text-xs text-center text-muted-foreground">
+              Run <code className="bg-muted px-1 rounded">bun run db:seed</code> to create dev users
+            </p>
 
             <div className="grid grid-cols-2 gap-4">
               <Button

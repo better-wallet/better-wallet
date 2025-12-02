@@ -49,3 +49,30 @@ export const protectedProcedure = t.procedure.use(async ({ ctx, next }) => {
     },
   })
 })
+
+// Admin-only procedure - requires 'provider' role
+export const adminProcedure = t.procedure.use(async ({ ctx, next }) => {
+  if (!ctx.session || !ctx.user) {
+    throw new TRPCError({
+      code: 'UNAUTHORIZED',
+      message: 'You must be logged in to access this resource',
+    })
+  }
+
+  // Check for admin/provider role
+  const userRole = (ctx.user as { role?: string }).role
+  if (userRole !== 'provider') {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'Admin access required',
+    })
+  }
+
+  return next({
+    ctx: {
+      ...ctx,
+      session: ctx.session,
+      user: ctx.user,
+    },
+  })
+})

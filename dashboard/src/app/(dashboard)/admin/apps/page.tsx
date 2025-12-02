@@ -23,7 +23,7 @@ function formatDate(date: Date) {
 }
 
 export default function AdminAppsPage() {
-  const { data, isLoading, error, refetch } = trpc.apps.list.useQuery()
+  const { data: apps, isLoading, error, refetch } = trpc.admin.listAllApps.useQuery()
 
   if (isLoading) {
     return (
@@ -53,10 +53,7 @@ export default function AdminAppsPage() {
     )
   }
 
-  // Combine owned and member apps into a single list
-  const allApps = data ? [...data.owned, ...data.member] : []
-  // Remove duplicates (in case user is both owner and member)
-  const apps = allApps.filter((app, index, self) => index === self.findIndex((a) => a.id === app.id))
+  const allApps = apps ?? []
 
   return (
     <div className="space-y-6">
@@ -70,20 +67,20 @@ export default function AdminAppsPage() {
             <Building2 className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{apps.length}</div>
+            <div className="text-2xl font-bold">{allApps.length}</div>
           </CardContent>
         </Card>
       </div>
 
       {/* Apps Table */}
-      {apps.length === 0 ? (
+      {allApps.length === 0 ? (
         <EmptyState icon={Building2} title="No apps" description="No applications have been registered yet." />
       ) : (
         <Card>
           <CardHeader>
             <CardTitle>Registered Applications</CardTitle>
             <CardDescription>
-              {apps.length} app{apps.length !== 1 ? 's' : ''} registered
+              {allApps.length} app{allApps.length !== 1 ? 's' : ''} registered
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -98,7 +95,7 @@ export default function AdminAppsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {apps.map((app) => (
+                {allApps.map((app) => (
                   <TableRow key={app.id}>
                     <TableCell>
                       <div>

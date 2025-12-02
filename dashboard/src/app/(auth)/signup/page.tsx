@@ -40,7 +40,7 @@ export default function SignupPage() {
       if (result.error) {
         setError(result.error.message || 'Signup failed')
       } else {
-        router.push('/overview')
+        router.push('/apps')
       }
     } catch (err) {
       setError('An unexpected error occurred')
@@ -52,7 +52,7 @@ export default function SignupPage() {
   const handleOAuthLogin = async (provider: 'github' | 'google') => {
     setError('')
     try {
-      await signIn.social({ provider, callbackURL: '/overview' })
+      await signIn.social({ provider, callbackURL: '/apps' })
     } catch (err) {
       setError('OAuth login failed')
     }

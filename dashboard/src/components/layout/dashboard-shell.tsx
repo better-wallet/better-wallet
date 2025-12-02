@@ -46,6 +46,7 @@ export function DashboardShell({ user, children }: DashboardShellProps) {
         currentAppId={currentAppId !== 'new' ? currentAppId : undefined}
         currentAppName={app?.name}
         isAdmin={isAdmin}
+        isAdminRoute={isAdminRoute}
       />
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center justify-between gap-2 border-b px-4">
@@ -54,7 +55,7 @@ export function DashboardShell({ user, children }: DashboardShellProps) {
             <Separator orientation="vertical" className="mr-2 h-4" />
             {headerTitle && <span className="text-sm font-medium text-muted-foreground">{headerTitle}</span>}
           </div>
-          <UserNav user={user} />
+          <UserNav user={{ ...user, role: userRole }} isAdminRoute={isAdminRoute} />
         </header>
         <main className="flex-1 p-6">{children}</main>
       </SidebarInset>

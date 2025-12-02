@@ -1,6 +1,6 @@
 'use client'
 
-import { ClipboardList, ExternalLink, Filter, RefreshCw } from 'lucide-react'
+import { ClipboardList, Download, ExternalLink, Filter, RefreshCw } from 'lucide-react'
 import { useParams } from 'next/navigation'
 import { useState } from 'react'
 
@@ -60,6 +60,55 @@ const resourceTypeLabels: Record<string, string> = {
   condition_set: 'Condition Set',
   transaction: 'Transaction',
   user: 'User',
+}
+
+function exportToCSV(logs: AuditLogData[], filename: string) {
+  const headers = ['Timestamp', 'Actor', 'Action', 'Resource Type', 'Resource ID', 'Policy Result', 'Signer ID', 'TX Hash', 'Client IP']
+  const rows = logs.map((log) => [
+    new Date(log.created_at).toISOString(),
+    log.actor,
+    log.action,
+    log.resource_type,
+    log.resource_id,
+    log.policy_result || '',
+    log.signer_id || '',
+    log.tx_hash || '',
+    log.client_ip || '',
+  ])
+
+  const csvContent = [
+    headers.join(','),
+    ...rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(',')),
+  ].join('\n')
+
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(blob)
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(link.href)
+}
+
+function exportToJSON(logs: AuditLogData[], filename: string) {
+  const data = logs.map((log) => ({
+    timestamp: new Date(log.created_at).toISOString(),
+    actor: log.actor,
+    action: log.action,
+    resource_type: log.resource_type,
+    resource_id: log.resource_id,
+    policy_result: log.policy_result,
+    signer_id: log.signer_id,
+    tx_hash: log.tx_hash,
+    client_ip: log.client_ip,
+  }))
+
+  const jsonContent = JSON.stringify(data, null, 2)
+  const blob = new Blob([jsonContent], { type: 'application/json' })
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(blob)
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(link.href)
 }
 
 export default function AuditLogPage() {
@@ -123,10 +172,33 @@ export default function AuditLogPage() {
         title="Audit Log"
         description="View all security events and actions for this app"
         actions={
-          <Button variant="outline" onClick={() => refetch()}>
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Refresh
-          </Button>
+          <div className="flex gap-2">
+            <Select
+              value=""
+              onValueChange={(format) => {
+                const timestamp = new Date().toISOString().split('T')[0]
+                const filename = `audit-logs-${timestamp}.${format}`
+                if (format === 'csv') {
+                  exportToCSV(logs, filename)
+                } else if (format === 'json') {
+                  exportToJSON(logs, filename)
+                }
+              }}
+            >
+              <SelectTrigger className="w-[130px]">
+                <Download className="h-4 w-4 mr-2" />
+                <span>Export</span>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="csv">Export CSV</SelectItem>
+                <SelectItem value="json">Export JSON</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button variant="outline" onClick={() => refetch()}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Refresh
+            </Button>
+          </div>
         }
       />
 
