@@ -171,11 +171,9 @@ export const keyQuorums = pgTable('key_quorums', {
 // Wallets
 export const wallets = pgTable('wallets', {
   id: uuid('id').primaryKey().defaultRandom(),
-  userId: uuid('user_id')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }), // nullable for app-managed wallets
   chainType: text('chain_type').notNull().default('ethereum'),
-  ownerId: uuid('owner_id').notNull(), // references authorization_keys or key_quorums
+  ownerId: uuid('owner_id'), // nullable for app-managed wallets, references authorization_keys or key_quorums
   execBackend: text('exec_backend').notNull().default('kms'), // kms, tee
   address: text('address').notNull(),
   appId: uuid('app_id').references(() => apps.id, { onDelete: 'cascade' }),

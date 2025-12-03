@@ -38,10 +38,10 @@ type KeyQuorum struct {
 // Wallet represents a blockchain wallet
 type Wallet struct {
 	ID          uuid.UUID  `json:"id"`
-	UserID      uuid.UUID  `json:"user_id"`
-	ChainType   string     `json:"chain_type"`   // ethereum, solana, etc.
-	OwnerID     uuid.UUID  `json:"owner_id"`     // references authorization_keys or key_quorums
-	ExecBackend string     `json:"exec_backend"` // kms, tee
+	UserID      *uuid.UUID `json:"user_id,omitempty"`  // nullable for app-managed wallets
+	ChainType   string     `json:"chain_type"`         // ethereum, solana, etc.
+	OwnerID     *uuid.UUID `json:"owner_id,omitempty"` // nullable for app-managed wallets, references authorization_keys or key_quorums
+	ExecBackend string     `json:"exec_backend"`       // kms, tee
 	Address     string     `json:"address"`
 	AppID       *uuid.UUID `json:"app_id,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`

@@ -183,19 +183,48 @@ func (r *WalletRepository) Delete(ctx context.Context, id uuid.UUID) error {
 }
 
 // List retrieves wallets with pagination, automatically scoped to app_id from context
-func (r *WalletRepository) List(ctx context.Context, userID uuid.UUID, chainType string, cursor *string, limit int) ([]*types.Wallet, error) {
+// List lists wallets with user_id filtering to maintain per-user isolation
+// - If userID is provided: returns wallets for that user AND app-managed wallets (user_id IS NULL)
+// - If userID is nil and onlyAppManaged is true: returns only app-managed wallets (user_id IS NULL)
+// - If userID is nil and onlyAppManaged is false: returns all wallets (admin use only)
+func (r *WalletRepository) List(ctx context.Context, userID *uuid.UUID, onlyAppManaged bool, chainType string, cursor *string, limit int) ([]*types.Wallet, error) {
 	appID, err := RequireAppID(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	query := `
-		SELECT id, user_id, chain_type, owner_id, exec_backend, address, app_id, created_at
-		FROM wallets
-		WHERE user_id = $1 AND app_id = $2
-	`
-	args := []interface{}{userID, appID}
-	argPos := 3
+	var query string
+	var args []interface{}
+	argPos := 1
+
+	if userID != nil {
+		// Filter by specific user OR include app-managed wallets (user_id IS NULL)
+		query = fmt.Sprintf(`
+			SELECT id, user_id, chain_type, owner_id, exec_backend, address, app_id, created_at
+			FROM wallets
+			WHERE app_id = $%d AND (user_id = $%d OR user_id IS NULL)
+		`, argPos, argPos+1)
+		args = []interface{}{appID, *userID}
+		argPos = 3
+	} else if onlyAppManaged {
+		// Only return app-managed wallets (user_id IS NULL) - for callers with no user record
+		query = fmt.Sprintf(`
+			SELECT id, user_id, chain_type, owner_id, exec_backend, address, app_id, created_at
+			FROM wallets
+			WHERE app_id = $%d AND user_id IS NULL
+		`, argPos)
+		args = []interface{}{appID}
+		argPos = 2
+	} else {
+		// List all wallets for the app (admin use only - not exposed via normal API)
+		query = fmt.Sprintf(`
+			SELECT id, user_id, chain_type, owner_id, exec_backend, address, app_id, created_at
+			FROM wallets
+			WHERE app_id = $%d
+		`, argPos)
+		args = []interface{}{appID}
+		argPos = 2
+	}
 
 	if chainType != "" {
 		query += fmt.Sprintf(" AND chain_type = $%d", argPos)

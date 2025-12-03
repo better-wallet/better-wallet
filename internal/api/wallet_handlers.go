@@ -265,15 +265,10 @@ func (s *Server) handleListWallets(w http.ResponseWriter, r *http.Request) {
 
 	// Filters
 	chainType := query.Get("chain_type")
-	userIDStr := query.Get("user_id")
 
-	var filterUserID *uuid.UUID
-	if userIDStr != "" {
-		uid, err := uuid.Parse(userIDStr)
-		if err == nil {
-			filterUserID = &uid
-		}
-	}
+	// SECURITY: user_id filter is ignored for user-authenticated requests
+	// Users can only see their own wallets + app-managed wallets
+	// The user_id filter is only used internally for admin/backend operations
 
 	// Fetch wallets (app-scoped by context automatically)
 	wallets, nextCursor, err := s.walletService.ListWallets(r.Context(), &app.ListWalletsRequest{
@@ -281,7 +276,7 @@ func (s *Server) handleListWallets(w http.ResponseWriter, r *http.Request) {
 		Cursor:       cursor,
 		Limit:        limit,
 		ChainType:    chainType,
-		FilterUserID: filterUserID,
+		FilterUserID: nil, // Always nil for user requests - enforces per-user isolation
 	})
 	if err != nil {
 		s.writeError(w, apperrors.NewWithDetail(
@@ -331,39 +326,32 @@ func (s *Server) handleCreateWallet(w http.ResponseWriter, r *http.Request) {
 		req.ChainType = types.ChainTypeEthereum
 	}
 
-	// Validate owner - must provide either owner or owner_id
-	if req.Owner == nil && req.OwnerID == nil {
-		s.writeError(w, apperrors.NewWithDetail(
-			apperrors.ErrCodeBadRequest,
-			"Owner is required",
-			"Must provide either 'owner' or 'owner_id'",
-			http.StatusBadRequest,
-		))
-		return
-	}
-
-	// Verify authorization signature against the owner key
-	if req.OwnerID != nil {
-		// If using existing owner, verify signature against that owner
-		if err := s.verifySignatureAgainstOwner(r, *req.OwnerID); err != nil {
-			s.writeError(w, apperrors.NewWithDetail(
-				apperrors.ErrCodeForbidden,
-				"Invalid authorization signature",
-				err.Error(),
-				http.StatusForbidden,
-			))
-			return
-		}
-	} else if req.Owner != nil && req.Owner.PublicKey != "" {
-		// If creating new owner, verify signature against the provided public key
-		if err := s.verifySignatureAgainstPublicKey(r, req.Owner.PublicKey); err != nil {
-			s.writeError(w, apperrors.NewWithDetail(
-				apperrors.ErrCodeForbidden,
-				"Invalid authorization signature",
-				err.Error(),
-				http.StatusForbidden,
-			))
-			return
+	// For app-managed wallets (no owner), no owner verification is needed - app secret auth is sufficient
+	// For user-owned wallets, verify authorization signature against the owner key
+	if req.Owner != nil || req.OwnerID != nil {
+		// User-owned wallet - signature verification required
+		if req.OwnerID != nil {
+			// If using existing owner, verify signature against that owner
+			if err := s.verifySignatureAgainstOwner(r, *req.OwnerID); err != nil {
+				s.writeError(w, apperrors.NewWithDetail(
+					apperrors.ErrCodeForbidden,
+					"Invalid authorization signature",
+					err.Error(),
+					http.StatusForbidden,
+				))
+				return
+			}
+		} else if req.Owner != nil && req.Owner.PublicKey != "" {
+			// If creating new owner, verify signature against the provided public key
+			if err := s.verifySignatureAgainstPublicKey(r, req.Owner.PublicKey); err != nil {
+				s.writeError(w, apperrors.NewWithDetail(
+					apperrors.ErrCodeForbidden,
+					"Invalid authorization signature",
+					err.Error(),
+					http.StatusForbidden,
+				))
+				return
+			}
 		}
 	}
 
@@ -589,7 +577,8 @@ func (s *Server) handleSignTransaction(w http.ResponseWriter, r *http.Request, w
 		}
 	}
 
-	// Build authorization signature payload
+	// Build authorization signature payload (for user-owned wallets)
+	// For app-managed wallets, signatures are not required - app secret auth is sufficient
 	_, canonicalBytes, err := auth.BuildCanonicalPayload(r)
 	if err != nil {
 		s.writeError(w, apperrors.NewWithDetail(
@@ -601,16 +590,8 @@ func (s *Server) handleSignTransaction(w http.ResponseWriter, r *http.Request, w
 		return
 	}
 
+	// Extract signatures (may be empty for app-managed wallets)
 	signatures := auth.ExtractSignatures(r)
-	if len(signatures) == 0 {
-		s.writeError(w, apperrors.NewWithDetail(
-			apperrors.ErrCodeUnauthorized,
-			"Missing authorization signature",
-			"x-authorization-signature header required",
-			http.StatusUnauthorized,
-		))
-		return
-	}
 
 	signedTx, err := s.walletService.SignTransaction(r.Context(), userSub, &app.SignTransactionRequest{
 		WalletID:         walletID,
@@ -752,7 +733,21 @@ func (s *Server) handleSignMessage(w http.ResponseWriter, r *http.Request, walle
 }
 
 // verifyAuthorizationSignature verifies the x-authorization-signature header
+// Returns nil for app-managed wallets (no owner) as they don't require signature verification
 func (s *Server) verifyAuthorizationSignature(r *http.Request, walletID uuid.UUID) error {
+	// Get wallet to determine owner
+	userSub, _ := getUserSub(r.Context())
+	wallet, err := s.walletService.GetWallet(r.Context(), walletID, userSub)
+	if err != nil {
+		return err
+	}
+
+	// App-managed wallets (no owner) don't require authorization signature
+	// App secret authentication is sufficient
+	if wallet.OwnerID == nil {
+		return nil
+	}
+
 	// Build canonical payload
 	_, canonicalBytes, err := auth.BuildCanonicalPayload(r)
 	if err != nil {
@@ -769,15 +764,8 @@ func (s *Server) verifyAuthorizationSignature(r *http.Request, walletID uuid.UUI
 		)
 	}
 
-	// Get wallet to determine owner
-	userSub, _ := getUserSub(r.Context())
-	wallet, err := s.walletService.GetWallet(r.Context(), walletID, userSub)
-	if err != nil {
-		return err
-	}
-
 	// Get owner information
-	owner, err := s.walletService.GetOwner(r.Context(), wallet.OwnerID)
+	owner, err := s.walletService.GetOwner(r.Context(), *wallet.OwnerID)
 	if err != nil {
 		return err
 	}
@@ -857,8 +845,8 @@ func convertWalletToResponse(w *types.Wallet) WalletResponse {
 		CreatedAt:         w.CreatedAt.UnixMilli(),
 	}
 
-	if w.OwnerID != uuid.Nil {
-		resp.OwnerID = &w.OwnerID
+	if w.OwnerID != nil {
+		resp.OwnerID = w.OwnerID
 	}
 
 	// TODO: Load policy IDs and additional signers from database
@@ -951,30 +939,6 @@ func (s *Server) handleExportWallet(w http.ResponseWriter, r *http.Request, wall
 		return
 	}
 
-	// Build and extract canonical payload for signature verification
-	_, canonicalBytes, err := auth.BuildCanonicalPayload(r)
-	if err != nil {
-		s.writeError(w, apperrors.NewWithDetail(
-			apperrors.ErrCodeBadRequest,
-			"Failed to build canonical payload",
-			err.Error(),
-			http.StatusBadRequest,
-		))
-		return
-	}
-
-	// Extract signatures from header
-	signatures := auth.ExtractSignatures(r)
-	if len(signatures) == 0 {
-		s.writeError(w, apperrors.NewWithDetail(
-			apperrors.ErrCodeUnauthorized,
-			"No authorization signature provided",
-			"",
-			http.StatusUnauthorized,
-		))
-		return
-	}
-
 	// Get wallet and verify ownership (app-scoped by context automatically)
 	wallet, err := s.walletService.GetWallet(r.Context(), walletID, userSub)
 	if err != nil {
@@ -991,27 +955,57 @@ func (s *Server) handleExportWallet(w http.ResponseWriter, r *http.Request, wall
 		return
 	}
 
-	// Verify owner signature
-	owner, err := s.walletService.GetOwner(r.Context(), wallet.OwnerID)
-	if err != nil {
-		s.writeError(w, apperrors.NewWithDetail(
-			apperrors.ErrCodeInternalError,
-			"Failed to get owner",
-			err.Error(),
-			http.StatusInternalServerError,
-		))
-		return
-	}
+	// For app-managed wallets (no owner), skip signature verification - app secret auth is sufficient
+	// For user-owned wallets, require owner signature verification
+	var signatures []string
+	var canonicalBytes []byte
+	if wallet.OwnerID != nil {
+		// Build and extract canonical payload for signature verification
+		_, canonicalBytes, err = auth.BuildCanonicalPayload(r)
+		if err != nil {
+			s.writeError(w, apperrors.NewWithDetail(
+				apperrors.ErrCodeBadRequest,
+				"Failed to build canonical payload",
+				err.Error(),
+				http.StatusBadRequest,
+			))
+			return
+		}
 
-	verifier := auth.NewSignatureVerifier()
-	if err := verifier.VerifyOwnerSignature(signatures, canonicalBytes, owner); err != nil {
-		s.writeError(w, apperrors.NewWithDetail(
-			apperrors.ErrCodeForbidden,
-			"Invalid authorization signature",
-			err.Error(),
-			http.StatusForbidden,
-		))
-		return
+		// Extract signatures from header
+		signatures = auth.ExtractSignatures(r)
+		if len(signatures) == 0 {
+			s.writeError(w, apperrors.NewWithDetail(
+				apperrors.ErrCodeUnauthorized,
+				"No authorization signature provided",
+				"",
+				http.StatusUnauthorized,
+			))
+			return
+		}
+
+		// Verify owner signature
+		owner, err := s.walletService.GetOwner(r.Context(), *wallet.OwnerID)
+		if err != nil {
+			s.writeError(w, apperrors.NewWithDetail(
+				apperrors.ErrCodeInternalError,
+				"Failed to get owner",
+				err.Error(),
+				http.StatusInternalServerError,
+			))
+			return
+		}
+
+		verifier := auth.NewSignatureVerifier()
+		if err := verifier.VerifyOwnerSignature(signatures, canonicalBytes, owner); err != nil {
+			s.writeError(w, apperrors.NewWithDetail(
+				apperrors.ErrCodeForbidden,
+				"Invalid authorization signature",
+				err.Error(),
+				http.StatusForbidden,
+			))
+			return
+		}
 	}
 
 	// Export wallet (retrieve private key from key executor)

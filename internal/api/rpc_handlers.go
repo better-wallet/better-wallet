@@ -527,27 +527,30 @@ func (s *Server) handleEthSignTypedData(
 		return
 	}
 
-	// Verify authorization signatures
-	owner, err := s.walletService.GetOwner(r.Context(), wallet.OwnerID)
-	if err != nil {
-		s.writeError(w, apperrors.NewWithDetail(
-			apperrors.ErrCodeInternalError,
-			"Failed to get owner",
-			err.Error(),
-			http.StatusInternalServerError,
-		))
-		return
-	}
+	// For app-managed wallets (no owner), skip signature verification - app secret auth is sufficient
+	// For user-owned wallets, verify authorization signatures
+	if wallet.OwnerID != nil {
+		owner, err := s.walletService.GetOwner(r.Context(), *wallet.OwnerID)
+		if err != nil {
+			s.writeError(w, apperrors.NewWithDetail(
+				apperrors.ErrCodeInternalError,
+				"Failed to get owner",
+				err.Error(),
+				http.StatusInternalServerError,
+			))
+			return
+		}
 
-	verifier := auth.NewSignatureVerifier()
-	if err := verifier.VerifyOwnerSignature(signatures, canonicalBytes, owner); err != nil {
-		s.writeError(w, apperrors.NewWithDetail(
-			apperrors.ErrCodeForbidden,
-			"Invalid authorization signature",
-			err.Error(),
-			http.StatusForbidden,
-		))
-		return
+		verifier := auth.NewSignatureVerifier()
+		if err := verifier.VerifyOwnerSignature(signatures, canonicalBytes, owner); err != nil {
+			s.writeError(w, apperrors.NewWithDetail(
+				apperrors.ErrCodeForbidden,
+				"Invalid authorization signature",
+				err.Error(),
+				http.StatusForbidden,
+			))
+			return
+		}
 	}
 
 	// Convert TypedData to app.TypedData

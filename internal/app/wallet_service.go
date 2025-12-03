@@ -58,6 +58,11 @@ func NewWalletService(
 	}
 }
 
+// IsAppManagedWallet returns true if the wallet has no owner (app-managed)
+func IsAppManagedWallet(wallet *types.Wallet) bool {
+	return wallet.OwnerID == nil
+}
+
 // CreateWalletRequest represents a request to create a wallet
 type CreateWalletRequest struct {
 	UserSub           string
@@ -110,35 +115,40 @@ type AdditionalSigner struct {
 	OverridePolicyIDs []uuid.UUID
 }
 
-// CreateWallet creates a new wallet for a user
+// CreateWallet creates a new wallet for a user or app-managed wallet
 // Returns the wallet and recovery share (recovery share must be stored securely by the client)
+// If no owner is provided, creates an app-managed wallet that can be controlled via app secret
 func (s *WalletService) CreateWallet(ctx context.Context, req *CreateWalletRequest) (*CreateWalletResponse, error) {
 	// Get AppID from context for multi-tenant isolation
 	appID, _ := storage.GetAppID(ctx)
 
-	// Get or create user
-	user, err := s.userRepo.GetOrCreate(ctx, req.UserSub)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get or create user: %w", err)
+	// Get or create user (optional for app-managed wallets)
+	var userID *uuid.UUID
+	if req.UserSub != "" {
+		user, err := s.userRepo.GetOrCreate(ctx, req.UserSub)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get or create user: %w", err)
+		}
+		userID = &user.ID
 	}
 
-	// Determine owner ID - either use existing or create new
-	var ownerID uuid.UUID
+	// Determine owner ID - either use existing, create new, or leave nil for app-managed wallets
+	var ownerID *uuid.UUID
 	var authKey *types.AuthorizationKey
 
 	if req.OwnerID != nil {
 		// Use existing authorization key or quorum
-		ownerID = *req.OwnerID
+		oid := *req.OwnerID
 
 		// Verify owner exists (either authorization key or key quorum)
-		existingKey, err := s.authKeyRepo.GetByID(ctx, ownerID)
+		existingKey, err := s.authKeyRepo.GetByID(ctx, oid)
 		if err == nil && existingKey != nil {
 			// Owner is an authorization key
-			ownerID = existingKey.ID
+			ownerID = &existingKey.ID
 		} else {
 			// Check if it's a key quorum
 			quorumRepo := storage.NewKeyQuorumRepository(s.store)
-			quorum, err := quorumRepo.GetByID(ctx, ownerID)
+			quorum, err := quorumRepo.GetByID(ctx, oid)
 			if err != nil || quorum == nil {
 				return nil, fmt.Errorf("owner_id does not reference a valid authorization key or key quorum")
 			}
@@ -162,7 +172,7 @@ func (s *WalletService) CreateWallet(ctx context.Context, req *CreateWalletReque
 				}
 			}
 
-			ownerID = quorum.ID
+			ownerID = &quorum.ID
 		}
 	} else if req.OwnerPublicKey != "" {
 		// Create new authorization key
@@ -189,18 +199,22 @@ func (s *WalletService) CreateWallet(ctx context.Context, req *CreateWalletReque
 			return nil, fmt.Errorf("invalid P-256 public key: point not on curve")
 		}
 
+		ownerEntity := req.UserSub
+		if ownerEntity == "" {
+			ownerEntity = "app-managed"
+		}
+
 		authKey = &types.AuthorizationKey{
 			ID:          uuid.New(),
 			PublicKey:   publicKeyBytes,
 			Algorithm:   req.OwnerAlgorithm,
-			OwnerEntity: req.UserSub,
+			OwnerEntity: ownerEntity,
 			Status:      types.StatusActive,
 			AppID:       &appID,
 		}
-		ownerID = authKey.ID
-	} else {
-		return nil, fmt.Errorf("must provide either owner_id or owner_public_key")
+		ownerID = &authKey.ID
 	}
+	// If neither owner_id nor owner_public_key is provided, ownerID remains nil (app-managed wallet)
 
 	// Generate and split key
 	keyMaterial, err := s.keyExec.GenerateAndSplitKey(ctx)
@@ -222,9 +236,9 @@ func (s *WalletService) CreateWallet(ctx context.Context, req *CreateWalletReque
 	// Create wallet record
 	wallet := &types.Wallet{
 		ID:          uuid.New(),
-		UserID:      user.ID,
+		UserID:      userID, // nil for app-managed wallets
 		ChainType:   req.ChainType,
-		OwnerID:     ownerID,
+		OwnerID:     ownerID, // nil for app-managed wallets
 		ExecBackend: req.ExecBackend,
 		Address:     keyMaterial.Address,
 		AppID:       &appID,
@@ -401,24 +415,34 @@ func (s *WalletService) SignTransaction(ctx context.Context, userSub string, req
 		return nil, apperrors.WalletNotFound(req.WalletID.String())
 	}
 
-	// Verify ownership
-	user, err := s.userRepo.GetByExternalSub(ctx, userSub)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get user: %w", err)
-	}
-	if user == nil || user.ID != wallet.UserID {
-		return nil, apperrors.ErrForbidden
-	}
+	// For user-owned wallets, verify ownership
+	// For app-managed wallets (no owner), skip user verification - app secret auth is sufficient
+	var matchedSignerID string
+	if !IsAppManagedWallet(wallet) {
+		// Verify ownership
+		user, err := s.userRepo.GetByExternalSub(ctx, userSub)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get user: %w", err)
+		}
+		if wallet.UserID != nil && (user == nil || user.ID != *wallet.UserID) {
+			return nil, apperrors.ErrForbidden
+		}
 
-	// Verify authorization signature (owner or active session signer)
-	matchedSignerID, err := s.verifyAuthorizationSignature(ctx, wallet, req.Signatures, req.CanonicalPayload, types.SignMethodTransaction)
-	if err != nil {
-		return nil, err
+		// Verify authorization signature (owner or active session signer)
+		matchedSignerID, err = s.verifyAuthorizationSignature(ctx, wallet, req.Signatures, req.CanonicalPayload, types.SignMethodTransaction)
+		if err != nil {
+			return nil, err
+		}
 	}
+	// For app-managed wallets, no authorization signature required - app secret auth is sufficient
 
 	// Check if signed by session signer and enforce limits
 	var sessionSigner *types.SessionSigner
-	if matchedSignerID != "" && matchedSignerID != wallet.OwnerID.String() {
+	ownerIDStr := ""
+	if wallet.OwnerID != nil {
+		ownerIDStr = wallet.OwnerID.String()
+	}
+	if matchedSignerID != "" && matchedSignerID != ownerIDStr {
 		// Matched a session signer - load it and check limits
 		signerUUID, err := uuid.Parse(matchedSignerID)
 		if err == nil {
@@ -522,7 +546,7 @@ func (s *WalletService) SignTransaction(ctx context.Context, userSub string, req
 			ClientIP:      middleware.GetClientIP(ctx),
 			UserAgent:     middleware.GetUserAgent(ctx),
 		}
-		if matchedSignerID != "" && matchedSignerID != wallet.OwnerID.String() {
+		if matchedSignerID != "" && matchedSignerID != ownerIDStr {
 			log.SignerID = &matchedSignerID
 		}
 		s.auditRepo.Create(ctx, log)
@@ -592,7 +616,7 @@ func (s *WalletService) SignTransaction(ctx context.Context, userSub string, req
 		ClientIP:      middleware.GetClientIP(ctx),
 		UserAgent:     middleware.GetUserAgent(ctx),
 	}
-	if matchedSignerID != "" && matchedSignerID != wallet.OwnerID.String() {
+	if matchedSignerID != "" && matchedSignerID != ownerIDStr {
 		log.SignerID = &matchedSignerID
 	}
 	s.auditRepo.Create(ctx, log)
@@ -629,12 +653,16 @@ func (s *WalletService) CreateSessionSigner(ctx context.Context, req *CreateSess
 		return nil, nil, apperrors.WalletNotFound(req.WalletID.String())
 	}
 
-	user, err := s.userRepo.GetByExternalSub(ctx, req.UserSub)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get user: %w", err)
-	}
-	if user == nil || user.ID != wallet.UserID {
-		return nil, nil, apperrors.ErrForbidden
+	// For user-owned wallets, verify ownership
+	// For app-managed wallets, skip user verification - app secret auth is sufficient
+	if !IsAppManagedWallet(wallet) && wallet.UserID != nil {
+		user, err := s.userRepo.GetByExternalSub(ctx, req.UserSub)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to get user: %w", err)
+		}
+		if user == nil || user.ID != *wallet.UserID {
+			return nil, nil, apperrors.ErrForbidden
+		}
 	}
 
 	// Validate public key (P-256 only)
@@ -731,12 +759,17 @@ func (s *WalletService) ListSessionSigners(ctx context.Context, userSub string, 
 	if wallet == nil {
 		return nil, apperrors.WalletNotFound(walletID.String())
 	}
-	user, err := s.userRepo.GetByExternalSub(ctx, userSub)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get user: %w", err)
-	}
-	if user == nil || user.ID != wallet.UserID {
-		return nil, apperrors.ErrForbidden
+
+	// For user-owned wallets, verify ownership
+	// For app-managed wallets, skip user verification - app secret auth is sufficient
+	if !IsAppManagedWallet(wallet) && wallet.UserID != nil {
+		user, err := s.userRepo.GetByExternalSub(ctx, userSub)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get user: %w", err)
+		}
+		if user == nil || user.ID != *wallet.UserID {
+			return nil, apperrors.ErrForbidden
+		}
 	}
 
 	signers, err := s.sessionRepo.ListByWallet(ctx, walletID)
@@ -770,12 +803,17 @@ func (s *WalletService) DeleteSessionSigner(ctx context.Context, userSub string,
 	if wallet == nil {
 		return apperrors.WalletNotFound(walletID.String())
 	}
-	user, err := s.userRepo.GetByExternalSub(ctx, userSub)
-	if err != nil {
-		return fmt.Errorf("failed to get user: %w", err)
-	}
-	if user == nil || user.ID != wallet.UserID {
-		return apperrors.ErrForbidden
+
+	// For user-owned wallets, verify ownership
+	// For app-managed wallets, skip user verification - app secret auth is sufficient
+	if !IsAppManagedWallet(wallet) && wallet.UserID != nil {
+		user, err := s.userRepo.GetByExternalSub(ctx, userSub)
+		if err != nil {
+			return fmt.Errorf("failed to get user: %w", err)
+		}
+		if user == nil || user.ID != *wallet.UserID {
+			return apperrors.ErrForbidden
+		}
 	}
 
 	ss, err := s.sessionRepo.GetByID(ctx, signerID)
@@ -813,7 +851,7 @@ func (s *WalletService) verifyAuthorizationSignature(ctx context.Context, wallet
 
 	// Check if owner is a key quorum
 	quorumRepo := storage.NewKeyQuorumRepository(s.store)
-	quorum, err := quorumRepo.GetByID(ctx, wallet.OwnerID)
+	quorum, err := quorumRepo.GetByID(ctx, *wallet.OwnerID)
 
 	if err == nil && quorum != nil {
 		// Owner is a key quorum - verify M-of-N signatures
@@ -884,10 +922,13 @@ func (s *WalletService) verifyQuorumSignatures(ctx context.Context, quorum *type
 
 // verifySingleOwnerSignature verifies signature for a single owner key or session signer
 // The requiredMethod parameter specifies which signing method is being requested.
+// Note: This function should only be called for user-owned wallets (wallet.OwnerID != nil)
 func (s *WalletService) verifySingleOwnerSignature(ctx context.Context, wallet *types.Wallet, signatures []string, canonicalPayload []byte, requiredMethod types.SigningMethod) (string, error) {
 	// Build list of allowed authorization keys
 	allowed := make(map[uuid.UUID]*types.SessionSigner)
-	allowed[wallet.OwnerID] = nil // nil indicates primary owner (has all permissions)
+	if wallet.OwnerID != nil {
+		allowed[*wallet.OwnerID] = nil // nil indicates primary owner (has all permissions)
+	}
 
 	// Active session signers
 	sessionSigners, err := s.sessionRepo.GetActiveByWallet(ctx, wallet.ID, time.Now())
@@ -976,13 +1017,16 @@ func (s *WalletService) GetWallet(ctx context.Context, walletID uuid.UUID, userS
 		return nil, fmt.Errorf("wallet not found")
 	}
 
-	// Verify ownership
-	user, err := s.userRepo.GetByExternalSub(ctx, userSub)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get user: %w", err)
-	}
-	if user == nil || user.ID != wallet.UserID {
-		return nil, apperrors.ErrForbidden
+	// For user-owned wallets, verify ownership
+	// For app-managed wallets, skip user verification - app secret auth is sufficient
+	if !IsAppManagedWallet(wallet) && wallet.UserID != nil {
+		user, err := s.userRepo.GetByExternalSub(ctx, userSub)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get user: %w", err)
+		}
+		if user == nil || user.ID != *wallet.UserID {
+			return nil, apperrors.ErrForbidden
+		}
 	}
 
 	return wallet, nil
@@ -990,14 +1034,36 @@ func (s *WalletService) GetWallet(ctx context.Context, walletID uuid.UUID, userS
 
 // ListWallets lists wallets with pagination and filtering
 // App-scoped access is automatically enforced by repository
+// Maintains per-user isolation: users can only see their own wallets + app-managed wallets
 func (s *WalletService) ListWallets(ctx context.Context, req *ListWalletsRequest) ([]*types.Wallet, *string, error) {
-	// Get user
-	user, err := s.userRepo.GetByExternalSub(ctx, req.UserSub)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get user: %w", err)
-	}
-	if user == nil {
-		return []*types.Wallet{}, nil, nil
+	// Determine user ID for filtering to maintain per-user isolation
+	// Users can see: their own wallets + app-managed wallets (user_id IS NULL)
+	var userID *uuid.UUID
+	onlyAppManaged := false
+
+	// SECURITY: If caller has a user sub, they can only see their own wallets
+	// FilterUserID is only honored when there's no user sub (backend/admin calls)
+	if req.UserSub != "" {
+		// User-authenticated request: always use caller's own user ID
+		// FilterUserID is IGNORED to prevent enumeration attacks
+		user, err := s.userRepo.GetByExternalSub(ctx, req.UserSub)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to get user: %w", err)
+		}
+		if user != nil {
+			userID = &user.ID
+		} else {
+			// Caller has no user record - only return app-managed wallets
+			// This maintains isolation: new/unknown users can't see other users' wallets
+			onlyAppManaged = true
+		}
+	} else if req.FilterUserID != nil {
+		// Backend/admin call with explicit user filter (no user JWT)
+		// This is for app-to-app calls where the app wants to list a specific user's wallets
+		userID = req.FilterUserID
+	} else {
+		// No user context and no filter - only return app-managed wallets for safety
+		onlyAppManaged = true
 	}
 
 	// Use repository's List method (app_id scope is automatically enforced)
@@ -1006,7 +1072,7 @@ func (s *WalletService) ListWallets(ctx context.Context, req *ListWalletsRequest
 		cursor = &req.Cursor
 	}
 
-	wallets, err := s.walletRepo.List(ctx, user.ID, req.ChainType, cursor, req.Limit)
+	wallets, err := s.walletRepo.List(ctx, userID, onlyAppManaged, req.ChainType, cursor, req.Limit)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to list wallets: %w", err)
 	}
@@ -1033,13 +1099,16 @@ func (s *WalletService) UpdateWallet(ctx context.Context, req *UpdateWalletReque
 		return nil, fmt.Errorf("wallet not found")
 	}
 
-	// Verify ownership
-	user, err := s.userRepo.GetByExternalSub(ctx, req.UserSub)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get user: %w", err)
-	}
-	if user == nil || user.ID != wallet.UserID {
-		return nil, apperrors.ErrForbidden
+	// For user-owned wallets, verify ownership
+	// For app-managed wallets, skip user verification - app secret auth is sufficient
+	if !IsAppManagedWallet(wallet) && wallet.UserID != nil {
+		user, err := s.userRepo.GetByExternalSub(ctx, req.UserSub)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get user: %w", err)
+		}
+		if user == nil || user.ID != *wallet.UserID {
+			return nil, apperrors.ErrForbidden
+		}
 	}
 
 	// Begin transaction
@@ -1062,7 +1131,7 @@ func (s *WalletService) UpdateWallet(ctx context.Context, req *UpdateWalletReque
 		if err != nil {
 			return nil, fmt.Errorf("failed to update owner: %w", err)
 		}
-		wallet.OwnerID = *req.OwnerID
+		wallet.OwnerID = req.OwnerID
 	} else if req.Owner != nil {
 		// Create new owner
 		publicKeyBytes := common.FromHex(req.Owner.PublicKey)
@@ -1091,7 +1160,7 @@ func (s *WalletService) UpdateWallet(ctx context.Context, req *UpdateWalletReque
 		if err != nil {
 			return nil, fmt.Errorf("failed to update owner: %w", err)
 		}
-		wallet.OwnerID = authKey.ID
+		wallet.OwnerID = &authKey.ID
 	}
 
 	// Update policy IDs if provided
@@ -1173,13 +1242,16 @@ func (s *WalletService) DeleteWallet(ctx context.Context, walletID uuid.UUID, us
 		return fmt.Errorf("wallet not found")
 	}
 
-	// Verify ownership
-	user, err := s.userRepo.GetByExternalSub(ctx, userSub)
-	if err != nil {
-		return fmt.Errorf("failed to get user: %w", err)
-	}
-	if user == nil || user.ID != wallet.UserID {
-		return apperrors.ErrForbidden
+	// For user-owned wallets, verify ownership
+	// For app-managed wallets, skip user verification - app secret auth is sufficient
+	if !IsAppManagedWallet(wallet) && wallet.UserID != nil {
+		user, err := s.userRepo.GetByExternalSub(ctx, userSub)
+		if err != nil {
+			return fmt.Errorf("failed to get user: %w", err)
+		}
+		if user == nil || user.ID != *wallet.UserID {
+			return apperrors.ErrForbidden
+		}
 	}
 
 	// Delete wallet (cascading deletes handled by DB)
@@ -1234,9 +1306,10 @@ type ExportWalletRequest struct {
 
 // ExportWallet exports the private key for a wallet
 // SECURITY: This operation is highly sensitive and requires:
-// 1. Authorization signature from wallet owner
+// 1. Authorization signature from wallet owner (for user-owned wallets)
 // 2. Full audit logging
 // 3. Rate limiting (should be implemented at API layer)
+// For app-managed wallets, only app secret auth is required
 func (s *WalletService) ExportWallet(ctx context.Context, userSub string, req *ExportWalletRequest) ([]byte, error) {
 	// Get wallet (automatically scoped to app_id from context)
 	wallet, err := s.walletRepo.GetByID(ctx, req.WalletID)
@@ -1247,51 +1320,68 @@ func (s *WalletService) ExportWallet(ctx context.Context, userSub string, req *E
 		return nil, apperrors.WalletNotFound(req.WalletID.String())
 	}
 
-	// Verify ownership
-	user, err := s.userRepo.GetByExternalSub(ctx, userSub)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get user: %w", err)
-	}
-	if user == nil || user.ID != wallet.UserID {
-		return nil, apperrors.ErrForbidden
-	}
-
-	// Verify authorization signature (owner only - session signers cannot export)
-	// For export, we only accept the wallet owner's signature, not session signers
-	ownerKey, err := s.authKeyRepo.GetByID(ctx, wallet.OwnerID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get owner key: %w", err)
-	}
-	if ownerKey == nil || ownerKey.Status != types.StatusActive {
-		return nil, apperrors.NewWithDetail(
-			apperrors.ErrCodeForbidden,
-			"Owner key not found or inactive",
-			"",
-			http.StatusForbidden,
-		)
-	}
-
-	// Verify the signature is from the owner
-	publicKeyPEM, err := auth.PublicKeyToPEM(ownerKey.PublicKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert public key: %w", err)
-	}
-
-	verifier := auth.NewSignatureVerifier()
-	verified := false
-	for _, sig := range req.Signatures {
-		if ok, err := verifier.VerifySignature(sig, req.CanonicalPayload, publicKeyPEM); err == nil && ok {
-			verified = true
-			break
+	// For app-managed wallets, skip user and signature verification - app secret auth is sufficient
+	if IsAppManagedWallet(wallet) {
+		// App-managed wallet - no owner signature required
+		// Just proceed to key export with app secret auth
+	} else {
+		// User-owned wallet - verify ownership and authorization signature
+		if wallet.UserID != nil {
+			user, err := s.userRepo.GetByExternalSub(ctx, userSub)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get user: %w", err)
+			}
+			if user == nil || user.ID != *wallet.UserID {
+				return nil, apperrors.ErrForbidden
+			}
 		}
-	}
-	if !verified {
-		return nil, apperrors.NewWithDetail(
-			apperrors.ErrCodeUnauthorized,
-			"Invalid authorization signature",
-			"Only wallet owner can export private key",
-			http.StatusUnauthorized,
-		)
+
+		// Verify authorization signature (owner only - session signers cannot export)
+		// For export, we only accept the wallet owner's signature, not session signers
+		if wallet.OwnerID == nil {
+			return nil, apperrors.NewWithDetail(
+				apperrors.ErrCodeForbidden,
+				"Owner not found",
+				"",
+				http.StatusForbidden,
+			)
+		}
+
+		ownerKey, err := s.authKeyRepo.GetByID(ctx, *wallet.OwnerID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get owner key: %w", err)
+		}
+		if ownerKey == nil || ownerKey.Status != types.StatusActive {
+			return nil, apperrors.NewWithDetail(
+				apperrors.ErrCodeForbidden,
+				"Owner key not found or inactive",
+				"",
+				http.StatusForbidden,
+			)
+		}
+
+		// Verify the signature is from the owner
+		publicKeyPEM, err := auth.PublicKeyToPEM(ownerKey.PublicKey)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert public key: %w", err)
+		}
+
+		verifier := auth.NewSignatureVerifier()
+		verified := false
+		for _, sig := range req.Signatures {
+			if ok, err := verifier.VerifySignature(sig, req.CanonicalPayload, publicKeyPEM); err == nil && ok {
+				verified = true
+				break
+			}
+		}
+		if !verified {
+			return nil, apperrors.NewWithDetail(
+				apperrors.ErrCodeUnauthorized,
+				"Invalid authorization signature",
+				"Only wallet owner can export private key",
+				http.StatusUnauthorized,
+			)
+		}
 	}
 
 	// Get wallet shares (encrypted private key material)
@@ -1362,24 +1452,31 @@ func (s *WalletService) SignMessage(ctx context.Context, userSub string, req *Si
 		return "", apperrors.WalletNotFound(req.WalletID.String())
 	}
 
-	// Verify ownership
-	user, err := s.userRepo.GetByExternalSub(ctx, userSub)
-	if err != nil {
-		return "", fmt.Errorf("failed to get user: %w", err)
-	}
-	if user == nil || user.ID != wallet.UserID {
-		return "", apperrors.ErrForbidden
-	}
+	// For user-owned wallets, verify ownership
+	// For app-managed wallets, skip user verification - app secret auth is sufficient
+	var matchedSignerID string
+	if !IsAppManagedWallet(wallet) {
+		if wallet.UserID != nil {
+			user, err := s.userRepo.GetByExternalSub(ctx, userSub)
+			if err != nil {
+				return "", fmt.Errorf("failed to get user: %w", err)
+			}
+			if user == nil || user.ID != *wallet.UserID {
+				return "", apperrors.ErrForbidden
+			}
+		}
 
-	// Verify authorization signature (owner or session signer with personal_sign permission)
-	matchedSignerID, err := s.verifyAuthorizationSignature(ctx, wallet, req.Signatures, req.CanonicalPayload, types.SignMethodPersonal)
-	if err != nil {
-		return "", err
+		// Verify authorization signature (owner or session signer with personal_sign permission)
+		var err error
+		matchedSignerID, err = s.verifyAuthorizationSignature(ctx, wallet, req.Signatures, req.CanonicalPayload, types.SignMethodPersonal)
+		if err != nil {
+			return "", err
+		}
 	}
 
 	// Load policies and evaluate
 	var sessionSigner *types.SessionSigner
-	if matchedSignerID != "" && matchedSignerID != wallet.OwnerID.String() {
+	if matchedSignerID != "" && wallet.OwnerID != nil && matchedSignerID != wallet.OwnerID.String() {
 		signerUUID, err := uuid.Parse(matchedSignerID)
 		if err == nil {
 			sessionSigner, _ = s.sessionRepo.GetByID(ctx, signerUUID)
