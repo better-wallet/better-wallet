@@ -1,6 +1,6 @@
 'use client'
 
-import { Copy, MoreHorizontal, Wallet as WalletIcon } from 'lucide-react'
+import { Bot, Copy, MoreHorizontal, Plus, Wallet as WalletIcon } from 'lucide-react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { useState } from 'react'
@@ -14,12 +14,28 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { trpc } from '@/lib/trpc/client'
@@ -55,10 +71,24 @@ export default function WalletsPage() {
   const params = useParams()
   const appId = params.appId as string
   const [walletToDelete, setWalletToDelete] = useState<{ id: string; address: string } | null>(null)
+  const [showCreateDialog, setShowCreateDialog] = useState(false)
+  const [chainType, setChainType] = useState<'ethereum' | 'solana'>('ethereum')
 
   const utils = trpc.useUtils()
   const { data: app } = trpc.apps.get.useQuery({ id: appId })
   const { data, isLoading, error, refetch } = trpc.backend.wallets.list.useQuery({ appId })
+
+  const createWallet = trpc.backend.wallets.create.useMutation({
+    onSuccess: (data) => {
+      toast.success(`App wallet created: ${data.address.slice(0, 10)}...`)
+      utils.backend.wallets.list.invalidate()
+      utils.backend.stats.invalidate()
+      setShowCreateDialog(false)
+    },
+    onError: (error: { message: string }) => {
+      toast.error(error.message)
+    },
+  })
 
   const deleteWallet = trpc.backend.wallets.delete.useMutation({
     onSuccess: () => {
@@ -71,6 +101,10 @@ export default function WalletsPage() {
       toast.error(error.message)
     },
   })
+
+  const handleCreateWallet = async () => {
+    await createWallet.mutateAsync({ appId, chainType })
+  }
 
   const handleDelete = async () => {
     if (walletToDelete) {
@@ -120,13 +154,29 @@ export default function WalletsPage() {
       <PageHeader
         title="Wallets"
         description="View and manage blockchain wallets for this app"
+        actions={
+          canManage && (
+            <Button onClick={() => setShowCreateDialog(true)}>
+              <Plus className="h-4 w-4 mr-2" />
+              Create App Wallet
+            </Button>
+          )
+        }
       />
 
       {wallets.length === 0 ? (
         <EmptyState
           icon={WalletIcon}
           title="No wallets"
-          description="Wallets are created via the API by your application users."
+          description="Create an App Wallet for server-side operations, or wallets will appear here when users create them via API."
+          action={
+            canManage
+              ? {
+                  label: 'Create App Wallet',
+                  onClick: () => setShowCreateDialog(true),
+                }
+              : undefined
+          }
         />
       ) : (
         <Card>
@@ -217,6 +267,73 @@ export default function WalletsPage() {
         variant="destructive"
         onConfirm={handleDelete}
       />
+
+      {/* Create App Wallet Dialog */}
+      <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Bot className="h-5 w-5" />
+              Create App Wallet
+            </DialogTitle>
+            <DialogDescription className="text-left">
+              Create a server-controlled wallet for automated operations.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            {/* Explanation Card */}
+            <Card className="bg-muted/50">
+              <CardContent className="pt-4 text-sm space-y-2">
+                <p className="font-medium">What is an App Wallet?</p>
+                <p className="text-muted-foreground">
+                  An App Wallet is a <strong>server-controlled</strong> wallet without a user owner.
+                  It is authenticated using your app&apos;s API secret only.
+                </p>
+                <p className="font-medium mt-3">Use cases:</p>
+                <ul className="text-muted-foreground list-disc list-inside space-y-1">
+                  <li>AI Agents &amp; Trading Bots</li>
+                  <li>Gas Station (paying gas for users)</li>
+                  <li>Treasury &amp; Fund Management</li>
+                  <li>Automated DeFi Operations</li>
+                </ul>
+                <p className="text-muted-foreground mt-3">
+                  <strong>Note:</strong> No authorization signature is required for operations.
+                  Anyone with your API secret can control this wallet.
+                </p>
+              </CardContent>
+            </Card>
+
+            {/* Chain Type Selection */}
+            <div className="space-y-2">
+              <Label htmlFor="chain-type">Blockchain</Label>
+              <Select value={chainType} onValueChange={(v) => setChainType(v as 'ethereum' | 'solana')}>
+                <SelectTrigger id="chain-type">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ethereum">Ethereum (EVM)</SelectItem>
+                  <SelectItem value="solana">Solana</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {chainType === 'ethereum'
+                  ? 'Works on Ethereum, Polygon, Arbitrum, Base, and other EVM chains.'
+                  : 'Native Solana wallet for SPL tokens and programs.'}
+              </p>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleCreateWallet} disabled={createWallet.isPending}>
+              {createWallet.isPending ? 'Creating...' : 'Create Wallet'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

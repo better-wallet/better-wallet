@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { db } from '@/server/db'
 import * as schema from '@/server/db/schema'
 import { createTRPCRouter, protectedProcedure } from '../trpc'
+import { createAppWallet } from '@/lib/wallet-api'
 
 // Policy evaluation helper types
 interface TestContext {
@@ -127,6 +128,56 @@ function compareBigInt(a: unknown, b: unknown): number {
     const aNum = Number(a)
     const bNum = Number(b)
     return aNum - bNum
+  }
+}
+
+// Generate a random secret
+function generateSecret(): { secret: string; prefix: string } {
+  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+  let randomPart = ''
+  for (let i = 0; i < 32; i++) {
+    randomPart += chars.charAt(Math.floor(Math.random() * chars.length))
+  }
+  const secret = `bw_sk_${randomPart}`
+  const prefix = `${secret.substring(0, 10)}...`
+  return { secret, prefix }
+}
+
+// Hash a secret for storage
+async function hashSecret(secret: string): Promise<string> {
+  const encoder = new TextEncoder()
+  const data = encoder.encode(secret)
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data)
+  const hashArray = Array.from(new Uint8Array(hashBuffer))
+  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+/**
+ * Create a temporary secret for internal API calls, execute the callback, then revoke it.
+ * This ensures we can call the wallet backend API without storing plain secrets.
+ */
+async function withTemporarySecret<T>(appId: string, callback: (secret: string) => Promise<T>): Promise<T> {
+  const { secret, prefix } = generateSecret()
+  const secretHash = await hashSecret(secret)
+
+  // Create temporary secret
+  const [tempSecret] = await db
+    .insert(schema.appSecrets)
+    .values({
+      appId,
+      secretHash,
+      secretPrefix: `[internal] ${prefix}`,
+      status: 'active',
+    })
+    .returning()
+
+  try {
+    // Execute the callback with the plain secret
+    const result = await callback(secret)
+    return result
+  } finally {
+    // Always revoke the temporary secret after use
+    await db.update(schema.appSecrets).set({ status: 'revoked' }).where(eq(schema.appSecrets.id, tempSecret.id))
   }
 }
 
@@ -373,6 +424,44 @@ export const backendRouter = createTRPCRouter({
         await db.delete(schema.wallets).where(and(eq(schema.wallets.id, input.id), eq(schema.wallets.appId, input.appId)))
 
         return { success: true }
+      }),
+
+    /**
+     * Create an App-Managed Wallet (Server Wallet)
+     *
+     * Creates a wallet without an owner, controlled entirely by the app via API secret.
+     * Use cases:
+     * - AI Agents
+     * - Automated trading bots
+     * - Gas station wallets
+     * - Server-side operations
+     *
+     * No authorization signature is required for operations on these wallets.
+     */
+    create: protectedProcedure
+      .input(
+        z.object({
+          appId: z.string(),
+          chainType: z.enum(['ethereum', 'solana']).default('ethereum'),
+        })
+      )
+      .mutation(async ({ ctx, input }) => {
+        const { role } = await checkAppAccess(ctx.session.user.id, input.appId)
+        if (role === 'viewer') {
+          throw new Error('Permission denied')
+        }
+
+        // Create a temporary secret, call the wallet API, then revoke the secret
+        const wallet = await withTemporarySecret(input.appId, async (secret) => {
+          return createAppWallet(input.appId, secret, input.chainType)
+        })
+
+        return {
+          id: wallet.id,
+          address: wallet.address,
+          chainType: wallet.chain_type,
+          createdAt: wallet.created_at,
+        }
       }),
 
     updatePolicies: protectedProcedure
