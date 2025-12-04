@@ -158,3 +158,87 @@ func TestValidateShare(t *testing.T) {
 		}
 	})
 }
+
+func TestSplitKeySSS_DifferentKeys(t *testing.T) {
+	// Test that different keys produce different shares
+	key1 := make([]byte, 32)
+	key2 := make([]byte, 32)
+	rand.Read(key1)
+	rand.Read(key2)
+
+	// Ensure keys are different
+	if bytes.Equal(key1, key2) {
+		t.Skip("generated identical keys by chance")
+	}
+
+	shareSet1, err := SplitKeyDefault(key1)
+	if err != nil {
+		t.Fatalf("failed to split key1: %v", err)
+	}
+
+	shareSet2, err := SplitKeyDefault(key2)
+	if err != nil {
+		t.Fatalf("failed to split key2: %v", err)
+	}
+
+	// Shares should be different
+	if bytes.Equal(shareSet1.AuthShare, shareSet2.AuthShare) {
+		t.Error("different keys produced identical auth shares")
+	}
+	if bytes.Equal(shareSet1.ExecShare, shareSet2.ExecShare) {
+		t.Error("different keys produced identical exec shares")
+	}
+}
+
+func TestCombineSharesSSS_InvalidShares(t *testing.T) {
+	// Try to combine shares that weren't generated together
+	key1 := make([]byte, 32)
+	key2 := make([]byte, 32)
+	rand.Read(key1)
+	rand.Read(key2)
+
+	shareSet1, _ := SplitKeyDefault(key1)
+	shareSet2, _ := SplitKeyDefault(key2)
+
+	// Mix shares from different keys - this may or may not error depending on share indices
+	// but the reconstructed key will be wrong
+	reconstructed, err := CombineSharesSSS([][]byte{shareSet1.AuthShare, shareSet2.ExecShare})
+
+	// The combine might succeed, but the result should not match either key
+	if err == nil {
+		if bytes.Equal(reconstructed, key1) || bytes.Equal(reconstructed, key2) {
+			t.Error("mixing shares should not reconstruct original keys")
+		}
+	}
+}
+
+func TestDefaultConstants(t *testing.T) {
+	if DefaultThreshold != 2 {
+		t.Errorf("expected DefaultThreshold to be 2, got %d", DefaultThreshold)
+	}
+	if DefaultTotalShares != 2 {
+		t.Errorf("expected DefaultTotalShares to be 2, got %d", DefaultTotalShares)
+	}
+}
+
+func TestShareSetStruct(t *testing.T) {
+	shareSet := ShareSet{
+		AuthShare:   []byte("auth-share-data"),
+		ExecShare:   []byte("exec-share-data"),
+		Threshold:   2,
+		TotalShares: 2,
+	}
+
+	if !bytes.Equal(shareSet.AuthShare, []byte("auth-share-data")) {
+		t.Error("auth share mismatch")
+	}
+	if !bytes.Equal(shareSet.ExecShare, []byte("exec-share-data")) {
+		t.Error("exec share mismatch")
+	}
+	if shareSet.Threshold != 2 {
+		t.Error("threshold mismatch")
+	}
+	if shareSet.TotalShares != 2 {
+		t.Error("total shares mismatch")
+	}
+}

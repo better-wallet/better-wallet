@@ -1,0 +1,317 @@
+package middleware
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	apperrors "github.com/better-wallet/better-wallet/pkg/errors"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestComputeBodyHash(t *testing.T) {
+	t.Run("hashes body content", func(t *testing.T) {
+		body := []byte("test body content")
+		hash := computeBodyHash(body)
+
+		// Verify it's a valid hex-encoded SHA-256 hash (64 chars)
+		assert.Len(t, hash, 64)
+
+		// Verify against known hash
+		expected := sha256.Sum256(body)
+		expectedHex := hex.EncodeToString(expected[:])
+		assert.Equal(t, expectedHex, hash)
+	})
+
+	t.Run("hashes empty body", func(t *testing.T) {
+		body := []byte{}
+		hash := computeBodyHash(body)
+
+		// Empty SHA-256 hash
+		expected := sha256.Sum256(body)
+		expectedHex := hex.EncodeToString(expected[:])
+		assert.Equal(t, expectedHex, hash)
+	})
+
+	t.Run("same content produces same hash", func(t *testing.T) {
+		body := []byte("identical content")
+		hash1 := computeBodyHash(body)
+		hash2 := computeBodyHash(body)
+		assert.Equal(t, hash1, hash2)
+	})
+
+	t.Run("different content produces different hash", func(t *testing.T) {
+		hash1 := computeBodyHash([]byte("content 1"))
+		hash2 := computeBodyHash([]byte("content 2"))
+		assert.NotEqual(t, hash1, hash2)
+	})
+}
+
+func TestWriteError(t *testing.T) {
+	t.Run("writes error JSON", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		err := apperrors.New("test_error", "Test error message", http.StatusBadRequest)
+
+		writeError(recorder, err)
+
+		assert.Equal(t, http.StatusBadRequest, recorder.Code)
+		assert.Equal(t, "application/json", recorder.Header().Get("Content-Type"))
+		assert.Contains(t, recorder.Body.String(), "test_error")
+		assert.Contains(t, recorder.Body.String(), "Test error message")
+	})
+}
+
+func TestResponseRecorder(t *testing.T) {
+	t.Run("captures status code", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		recorder := &responseRecorder{
+			ResponseWriter: w,
+			statusCode:     http.StatusOK,
+			body:           &bytes.Buffer{},
+			headers:        make(http.Header),
+		}
+
+		recorder.WriteHeader(http.StatusCreated)
+		assert.Equal(t, http.StatusCreated, recorder.statusCode)
+		assert.True(t, recorder.written)
+	})
+
+	t.Run("captures body", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		recorder := &responseRecorder{
+			ResponseWriter: w,
+			statusCode:     http.StatusOK,
+			body:           &bytes.Buffer{},
+			headers:        make(http.Header),
+		}
+
+		n, err := recorder.Write([]byte("test response body"))
+		require.NoError(t, err)
+		assert.Equal(t, 18, n)
+		assert.Equal(t, "test response body", recorder.body.String())
+	})
+
+	t.Run("Write sets default status code if not written", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		recorder := &responseRecorder{
+			ResponseWriter: w,
+			statusCode:     http.StatusOK,
+			body:           &bytes.Buffer{},
+			headers:        make(http.Header),
+		}
+
+		recorder.Write([]byte("data"))
+		assert.True(t, recorder.written)
+		assert.Equal(t, http.StatusOK, recorder.statusCode)
+	})
+
+	t.Run("WriteHeader is idempotent", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		recorder := &responseRecorder{
+			ResponseWriter: w,
+			statusCode:     http.StatusOK,
+			body:           &bytes.Buffer{},
+			headers:        make(http.Header),
+		}
+
+		recorder.WriteHeader(http.StatusCreated)
+		recorder.WriteHeader(http.StatusBadRequest) // Should be ignored
+
+		assert.Equal(t, http.StatusCreated, recorder.statusCode)
+	})
+
+	t.Run("Header returns underlying header", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		recorder := &responseRecorder{
+			ResponseWriter: w,
+			statusCode:     http.StatusOK,
+			body:           &bytes.Buffer{},
+			headers:        make(http.Header),
+		}
+
+		recorder.Header().Set("X-Test", "value")
+		assert.Equal(t, "value", w.Header().Get("X-Test"))
+	})
+
+	t.Run("captures headers on first write", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Custom", "header-value")
+
+		recorder := &responseRecorder{
+			ResponseWriter: w,
+			statusCode:     http.StatusOK,
+			body:           &bytes.Buffer{},
+			headers:        make(http.Header),
+		}
+
+		recorder.Write([]byte("data"))
+		assert.NotEmpty(t, recorder.headers)
+	})
+}
+
+func TestIdempotencyMiddleware_SkipsNonMutationRequests(t *testing.T) {
+	middleware := &IdempotencyMiddleware{
+		repo: nil, // Not needed for GET requests
+	}
+
+	t.Run("skips GET requests", func(t *testing.T) {
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("success"))
+		})
+
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		recorder := httptest.NewRecorder()
+
+		middleware.Handle(handler).ServeHTTP(recorder, req)
+
+		assert.Equal(t, http.StatusOK, recorder.Code)
+		assert.Equal(t, "success", recorder.Body.String())
+	})
+
+	t.Run("skips PUT requests", func(t *testing.T) {
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+
+		req := httptest.NewRequest(http.MethodPut, "/test", nil)
+		recorder := httptest.NewRecorder()
+
+		middleware.Handle(handler).ServeHTTP(recorder, req)
+
+		assert.Equal(t, http.StatusOK, recorder.Code)
+	})
+
+	t.Run("skips OPTIONS requests", func(t *testing.T) {
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+
+		req := httptest.NewRequest(http.MethodOptions, "/test", nil)
+		recorder := httptest.NewRecorder()
+
+		middleware.Handle(handler).ServeHTTP(recorder, req)
+
+		assert.Equal(t, http.StatusOK, recorder.Code)
+	})
+
+	t.Run("skips HEAD requests", func(t *testing.T) {
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+
+		req := httptest.NewRequest(http.MethodHead, "/test", nil)
+		recorder := httptest.NewRecorder()
+
+		middleware.Handle(handler).ServeHTTP(recorder, req)
+
+		assert.Equal(t, http.StatusOK, recorder.Code)
+	})
+}
+
+func TestIdempotencyMiddleware_NoKeyProceedsNormally(t *testing.T) {
+	middleware := &IdempotencyMiddleware{
+		repo: nil,
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusCreated)
+		w.Write(body)
+	})
+
+	t.Run("POST without idempotency key proceeds normally", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader("request body"))
+		recorder := httptest.NewRecorder()
+
+		middleware.Handle(handler).ServeHTTP(recorder, req)
+
+		assert.Equal(t, http.StatusCreated, recorder.Code)
+		assert.Equal(t, "request body", recorder.Body.String())
+	})
+
+	t.Run("PATCH without idempotency key proceeds normally", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPatch, "/test", strings.NewReader("patch data"))
+		recorder := httptest.NewRecorder()
+
+		middleware.Handle(handler).ServeHTTP(recorder, req)
+
+		assert.Equal(t, http.StatusCreated, recorder.Code)
+	})
+
+	t.Run("DELETE without idempotency key proceeds normally", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodDelete, "/test", nil)
+		recorder := httptest.NewRecorder()
+
+		middleware.Handle(handler).ServeHTTP(recorder, req)
+
+		assert.Equal(t, http.StatusCreated, recorder.Code)
+	})
+}
+
+func TestIdempotencyMiddleware_KeyValidation(t *testing.T) {
+	middleware := &IdempotencyMiddleware{
+		repo: nil,
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	t.Run("rejects key longer than 256 characters", func(t *testing.T) {
+		longKey := strings.Repeat("a", 257)
+		req := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader("body"))
+		req.Header.Set("x-idempotency-key", longKey)
+		recorder := httptest.NewRecorder()
+
+		middleware.Handle(handler).ServeHTTP(recorder, req)
+
+		assert.Equal(t, http.StatusBadRequest, recorder.Code)
+		assert.Contains(t, recorder.Body.String(), "too long")
+	})
+
+	t.Run("accepts key at max length (256 characters)", func(t *testing.T) {
+		maxKey := strings.Repeat("a", 256)
+		req := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader("body"))
+		req.Header.Set("x-idempotency-key", maxKey)
+		req.Header.Set("x-app-id", "test-app-id")
+		recorder := httptest.NewRecorder()
+
+		// This will fail because repo is nil, but it shouldn't fail on key validation
+		// The error will be a panic/nil pointer, indicating key validation passed
+		defer func() {
+			r := recover()
+			// If we recovered from panic, it means the key validation passed
+			// and it tried to access the nil repo
+			assert.NotNil(t, r)
+		}()
+
+		middleware.Handle(handler).ServeHTTP(recorder, req)
+	})
+
+	t.Run("requires app ID header", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader("body"))
+		req.Header.Set("x-idempotency-key", "test-key")
+		// No x-app-id header
+		recorder := httptest.NewRecorder()
+
+		middleware.Handle(handler).ServeHTTP(recorder, req)
+
+		assert.Equal(t, http.StatusBadRequest, recorder.Code)
+		assert.Contains(t, recorder.Body.String(), "app")
+	})
+}
+
+func TestNewIdempotencyMiddleware(t *testing.T) {
+	t.Run("creates middleware with repo", func(t *testing.T) {
+		middleware := NewIdempotencyMiddleware(nil)
+		require.NotNil(t, middleware)
+	})
+}

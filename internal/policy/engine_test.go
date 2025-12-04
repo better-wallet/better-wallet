@@ -656,3 +656,2073 @@ func TestConditionSetOperator(t *testing.T) {
 func strPtr(s string) *string {
 	return &s
 }
+
+// TestNestedFieldExtraction tests nested field extraction from maps
+func TestNestedFieldExtraction(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	policy := &types.Policy{
+		ID:        uuid.New(),
+		Name:      "Nested Field Policy",
+		ChainType: "ethereum",
+		Version:   "1.0",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"name":   "Check nested typed data field",
+					"method": "eth_signTypedData_v4",
+					"action": "ALLOW",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "ethereum_typed_data_message",
+							"field":        "transfer.recipient",
+							"operator":     "eq",
+							"value":        "0xabc",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	tests := []struct {
+		name     string
+		message  map[string]interface{}
+		expected PolicyDecision
+	}{
+		{
+			name: "nested_field_matches",
+			message: map[string]interface{}{
+				"transfer": map[string]interface{}{
+					"recipient": "0xabc",
+					"amount":    "1000",
+				},
+			},
+			expected: DecisionAllow,
+		},
+		{
+			name: "nested_field_does_not_match",
+			message: map[string]interface{}{
+				"transfer": map[string]interface{}{
+					"recipient": "0xdef",
+					"amount":    "1000",
+				},
+			},
+			expected: DecisionDeny,
+		},
+		{
+			name: "missing_nested_field",
+			message: map[string]interface{}{
+				"other": "value",
+			},
+			expected: DecisionDeny,
+		},
+		{
+			name:     "nil_message",
+			message:  nil,
+			expected: DecisionDeny,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			evalCtx := &EvaluationContext{
+				ChainType:        "ethereum",
+				Method:           "eth_signTypedData_v4",
+				TypedDataMessage: tt.message,
+				Timestamp:        time.Now(),
+			}
+
+			result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if result.Decision != tt.expected {
+				t.Errorf("expected %v, got %v (reason: %s)", tt.expected, result.Decision, result.Reason)
+			}
+		})
+	}
+}
+
+// TestAllOperators tests all comparison operators
+func TestAllOperators(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	makePolicy := func(operator string, value interface{}) *types.Policy {
+		return &types.Policy{
+			ID:        uuid.New(),
+			Name:      "Operator Test Policy",
+			ChainType: "ethereum",
+			Version:   "1.0",
+			Rules: map[string]interface{}{
+				"rules": []interface{}{
+					map[string]interface{}{
+						"name":   "Test rule",
+						"method": "*",
+						"action": "ALLOW",
+						"conditions": []interface{}{
+							map[string]interface{}{
+								"field_source": "ethereum_transaction",
+								"field":        "value",
+								"operator":     operator,
+								"value":        value,
+							},
+						},
+					},
+				},
+			},
+		}
+	}
+
+	tests := []struct {
+		name     string
+		operator string
+		expected interface{}
+		actual   *big.Int
+		decision PolicyDecision
+	}{
+		// eq tests
+		{"eq_matches", "eq", "100", big.NewInt(100), DecisionAllow},
+		{"eq_no_match", "eq", "100", big.NewInt(200), DecisionDeny},
+		// neq tests
+		{"neq_different", "neq", "100", big.NewInt(200), DecisionAllow},
+		{"neq_same", "neq", "100", big.NewInt(100), DecisionDeny},
+		// lt tests
+		{"lt_less", "lt", "100", big.NewInt(50), DecisionAllow},
+		{"lt_equal", "lt", "100", big.NewInt(100), DecisionDeny},
+		{"lt_greater", "lt", "100", big.NewInt(150), DecisionDeny},
+		// lte tests
+		{"lte_less", "lte", "100", big.NewInt(50), DecisionAllow},
+		{"lte_equal", "lte", "100", big.NewInt(100), DecisionAllow},
+		{"lte_greater", "lte", "100", big.NewInt(150), DecisionDeny},
+		// gt tests
+		{"gt_greater", "gt", "100", big.NewInt(150), DecisionAllow},
+		{"gt_equal", "gt", "100", big.NewInt(100), DecisionDeny},
+		{"gt_less", "gt", "100", big.NewInt(50), DecisionDeny},
+		// gte tests
+		{"gte_greater", "gte", "100", big.NewInt(150), DecisionAllow},
+		{"gte_equal", "gte", "100", big.NewInt(100), DecisionAllow},
+		{"gte_less", "gte", "100", big.NewInt(50), DecisionDeny},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			policy := makePolicy(tt.operator, tt.expected)
+			evalCtx := &EvaluationContext{
+				ChainType: "ethereum",
+				Method:    "eth_sendTransaction",
+				To:        strPtr("0x1234567890abcdef1234567890abcdef12345678"),
+				Value:     tt.actual,
+				Timestamp: time.Now(),
+			}
+
+			result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if result.Decision != tt.decision {
+				t.Errorf("expected %v, got %v", tt.decision, result.Decision)
+			}
+		})
+	}
+}
+
+// TestPersonalMessageFieldSource tests the ethereum_message field source
+func TestPersonalMessageFieldSource(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	policy := &types.Policy{
+		ID:        uuid.New(),
+		Name:      "Personal Message Policy",
+		ChainType: "ethereum",
+		Version:   "1.0",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"name":   "Check message content",
+					"method": "personal_sign",
+					"action": "ALLOW",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "ethereum_message",
+							"field":        "message",
+							"operator":     "eq",
+							"value":        "Sign in to MyApp",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	tests := []struct {
+		name     string
+		message  string
+		expected PolicyDecision
+	}{
+		{
+			name:     "message_matches",
+			message:  "Sign in to MyApp",
+			expected: DecisionAllow,
+		},
+		{
+			name:     "message_does_not_match",
+			message:  "Other message",
+			expected: DecisionDeny,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			evalCtx := &EvaluationContext{
+				ChainType:       "ethereum",
+				Method:          "personal_sign",
+				PersonalMessage: tt.message,
+				Timestamp:       time.Now(),
+			}
+
+			result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if result.Decision != tt.expected {
+				t.Errorf("expected %v, got %v (reason: %s)", tt.expected, result.Decision, result.Reason)
+			}
+		})
+	}
+}
+
+// TestEIP7702AuthorizationFieldSource tests the ethereum_7702_authorization field source
+func TestEIP7702AuthorizationFieldSource(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	policy := &types.Policy{
+		ID:        uuid.New(),
+		Name:      "EIP-7702 Policy",
+		ChainType: "ethereum",
+		Version:   "1.0",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"name":   "Check authorization contract",
+					"method": "eth_sendTransaction",
+					"action": "ALLOW",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "ethereum_7702_authorization",
+							"field":        "contract",
+							"operator":     "eq",
+							"value":        "0xapprovedcontract",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	tests := []struct {
+		name     string
+		contract string
+		expected PolicyDecision
+	}{
+		{
+			name:     "contract_matches",
+			contract: "0xapprovedcontract",
+			expected: DecisionAllow,
+		},
+		{
+			name:     "contract_does_not_match",
+			contract: "0xothercontract",
+			expected: DecisionDeny,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			evalCtx := &EvaluationContext{
+				ChainType:             "ethereum",
+				Method:                "eth_sendTransaction",
+				AuthorizationContract: tt.contract,
+				Timestamp:             time.Now(),
+			}
+
+			result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if result.Decision != tt.expected {
+				t.Errorf("expected %v, got %v (reason: %s)", tt.expected, result.Decision, result.Reason)
+			}
+		})
+	}
+}
+
+// TestDecodedCalldataFieldSource tests the ethereum_calldata field source
+func TestDecodedCalldataFieldSource(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	policy := &types.Policy{
+		ID:        uuid.New(),
+		Name:      "Calldata Policy",
+		ChainType: "ethereum",
+		Version:   "1.0",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"name":   "Check ERC20 transfer recipient",
+					"method": "eth_sendTransaction",
+					"action": "ALLOW",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "ethereum_calldata",
+							"field":        "transfer.to",
+							"operator":     "eq",
+							"value":        "0xrecipient",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	tests := []struct {
+		name     string
+		calldata map[string]interface{}
+		expected PolicyDecision
+	}{
+		{
+			name: "calldata_matches",
+			calldata: map[string]interface{}{
+				"transfer": map[string]interface{}{
+					"to":     "0xrecipient",
+					"amount": "1000",
+				},
+			},
+			expected: DecisionAllow,
+		},
+		{
+			name: "calldata_does_not_match",
+			calldata: map[string]interface{}{
+				"transfer": map[string]interface{}{
+					"to":     "0xotherrecipient",
+					"amount": "1000",
+				},
+			},
+			expected: DecisionDeny,
+		},
+		{
+			name:     "nil_calldata",
+			calldata: nil,
+			expected: DecisionDeny,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			evalCtx := &EvaluationContext{
+				ChainType:       "ethereum",
+				Method:          "eth_sendTransaction",
+				DecodedCalldata: tt.calldata,
+				Timestamp:       time.Now(),
+			}
+
+			result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if result.Decision != tt.expected {
+				t.Errorf("expected %v, got %v (reason: %s)", tt.expected, result.Decision, result.Reason)
+			}
+		})
+	}
+}
+
+// TestChainTypeFiltering tests that policies are filtered by chain type
+func TestChainTypeFiltering(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	ethereumPolicy := &types.Policy{
+		ID:        uuid.New(),
+		Name:      "Ethereum Policy",
+		ChainType: "ethereum",
+		Version:   "1.0",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"name":       "Allow all",
+					"method":     "*",
+					"action":     "ALLOW",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "ethereum_transaction",
+							"field":        "chain_id",
+							"operator":     "eq",
+							"value":        float64(1),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	tests := []struct {
+		name      string
+		chainType string
+		chainID   int64
+		expected  PolicyDecision
+	}{
+		{
+			name:      "matching_chain_type",
+			chainType: "ethereum",
+			chainID:   1,
+			expected:  DecisionAllow,
+		},
+		{
+			name:      "different_chain_type_skipped",
+			chainType: "solana",
+			chainID:   1,
+			expected:  DecisionDeny, // No matching policy
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			evalCtx := &EvaluationContext{
+				ChainType: tt.chainType,
+				ChainID:   tt.chainID,
+				Method:    "eth_sendTransaction",
+				To:        strPtr("0x1234"),
+				Value:     big.NewInt(0),
+				Timestamp: time.Now(),
+			}
+
+			result, err := engine.Evaluate(ctx, []*types.Policy{ethereumPolicy}, evalCtx)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if result.Decision != tt.expected {
+				t.Errorf("expected %v, got %v (reason: %s)", tt.expected, result.Decision, result.Reason)
+			}
+		})
+	}
+}
+
+// TestMultipleConditionsANDLogic tests that multiple conditions use AND logic
+func TestMultipleConditionsANDLogic(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	policy := &types.Policy{
+		ID:        uuid.New(),
+		Name:      "Multi-condition Policy",
+		ChainType: "ethereum",
+		Version:   "1.0",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"name":   "Allow small transfers to approved address",
+					"method": "*",
+					"action": "ALLOW",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "ethereum_transaction",
+							"field":        "to",
+							"operator":     "eq",
+							"value":        "0xapprovedaddress",
+						},
+						map[string]interface{}{
+							"field_source": "ethereum_transaction",
+							"field":        "value",
+							"operator":     "lte",
+							"value":        "1000",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	tests := []struct {
+		name     string
+		to       string
+		value    *big.Int
+		expected PolicyDecision
+	}{
+		{
+			name:     "both_conditions_match",
+			to:       "0xapprovedaddress",
+			value:    big.NewInt(500),
+			expected: DecisionAllow,
+		},
+		{
+			name:     "first_condition_fails",
+			to:       "0xotheraddress",
+			value:    big.NewInt(500),
+			expected: DecisionDeny,
+		},
+		{
+			name:     "second_condition_fails",
+			to:       "0xapprovedaddress",
+			value:    big.NewInt(2000),
+			expected: DecisionDeny,
+		},
+		{
+			name:     "both_conditions_fail",
+			to:       "0xotheraddress",
+			value:    big.NewInt(2000),
+			expected: DecisionDeny,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			evalCtx := &EvaluationContext{
+				ChainType: "ethereum",
+				Method:    "eth_sendTransaction",
+				To:        strPtr(tt.to),
+				Value:     tt.value,
+				Timestamp: time.Now(),
+			}
+
+			result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if result.Decision != tt.expected {
+				t.Errorf("expected %v, got %v (reason: %s)", tt.expected, result.Decision, result.Reason)
+			}
+		})
+	}
+}
+
+// TestNewEngine tests engine creation
+func TestNewEngine(t *testing.T) {
+	engine := NewEngine()
+	if engine == nil {
+		t.Error("NewEngine() returned nil")
+	}
+}
+
+// TestPolicyDecisionConstants tests decision constants
+func TestPolicyDecisionConstants(t *testing.T) {
+	if DecisionDeny != 0 {
+		t.Error("DecisionDeny should be 0")
+	}
+	if DecisionAllow != 1 {
+		t.Error("DecisionAllow should be 1")
+	}
+}
+
+// TestEthereumTransactionDataField tests the 'data' field from ethereum transactions
+func TestEthereumTransactionDataField(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	policy := &types.Policy{
+		ID:        uuid.New(),
+		Name:      "Data Field Policy",
+		ChainType: "ethereum",
+		Version:   "1.0",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"name":   "Check transaction data",
+					"method": "*",
+					"action": "ALLOW",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "ethereum_transaction",
+							"field":        "data",
+							"operator":     "eq",
+							"value":        "68656c6c6f",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	tests := []struct {
+		name     string
+		data     []byte
+		expected PolicyDecision
+	}{
+		{
+			name:     "data_matches",
+			data:     []byte("hello"),
+			expected: DecisionAllow,
+		},
+		{
+			name:     "data_does_not_match",
+			data:     []byte("world"),
+			expected: DecisionDeny,
+		},
+		{
+			name:     "nil_data",
+			data:     nil,
+			expected: DecisionDeny,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			evalCtx := &EvaluationContext{
+				ChainType: "ethereum",
+				Method:    "eth_sendTransaction",
+				To:        strPtr("0x1234"),
+				Data:      tt.data,
+				Timestamp: time.Now(),
+			}
+
+			result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if result.Decision != tt.expected {
+				t.Errorf("expected %v, got %v (reason: %s)", tt.expected, result.Decision, result.Reason)
+			}
+		})
+	}
+}
+
+// TestEthereumTransactionFromField tests the 'from' field
+func TestEthereumTransactionFromField(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	policy := &types.Policy{
+		ID:        uuid.New(),
+		Name:      "From Field Policy",
+		ChainType: "ethereum",
+		Version:   "1.0",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"name":   "Check from address",
+					"method": "*",
+					"action": "ALLOW",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "ethereum_transaction",
+							"field":        "from",
+							"operator":     "eq",
+							"value":        "0xsenderaddress",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	evalCtx := &EvaluationContext{
+		ChainType: "ethereum",
+		Method:    "eth_sendTransaction",
+		Address:   "0xSENDERADDRESS", // uppercase
+		To:        strPtr("0x1234"),
+		Timestamp: time.Now(),
+	}
+
+	result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should match (case-insensitive)
+	if result.Decision != DecisionAllow {
+		t.Errorf("expected allow, got deny (reason: %s)", result.Reason)
+	}
+}
+
+// TestSystemFieldTimestamp tests the system timestamp field
+func TestSystemFieldTimestamp(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	policy := &types.Policy{
+		ID:        uuid.New(),
+		Name:      "Timestamp Policy",
+		ChainType: "ethereum",
+		Version:   "1.0",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"name":   "Check timestamp",
+					"method": "*",
+					"action": "ALLOW",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "system",
+							"field":        "current_unix_timestamp",
+							"operator":     "gt",
+							"value":        float64(0),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	evalCtx := &EvaluationContext{
+		ChainType: "ethereum",
+		Method:    "eth_sendTransaction",
+		To:        strPtr("0x1234"),
+		Timestamp: time.Now(),
+	}
+
+	result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Decision != DecisionAllow {
+		t.Errorf("expected allow, got deny (reason: %s)", result.Reason)
+	}
+}
+
+// TestSystemFieldUnknown tests an unknown system field
+func TestSystemFieldUnknown(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	policy := &types.Policy{
+		ID:        uuid.New(),
+		Name:      "Unknown System Field Policy",
+		ChainType: "ethereum",
+		Version:   "1.0",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"name":   "Check unknown field",
+					"method": "*",
+					"action": "ALLOW",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "system",
+							"field":        "unknown_field",
+							"operator":     "eq",
+							"value":        "anything",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	evalCtx := &EvaluationContext{
+		ChainType: "ethereum",
+		Method:    "eth_sendTransaction",
+		To:        strPtr("0x1234"),
+		Timestamp: time.Now(),
+	}
+
+	result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Unknown field should not match, resulting in deny
+	if result.Decision != DecisionDeny {
+		t.Errorf("expected deny for unknown field, got allow")
+	}
+}
+
+// TestInOperatorWithStringArray tests the 'in' operator with []string
+func TestInOperatorWithStringArray(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	policy := &types.Policy{
+		ID:        uuid.New(),
+		Name:      "In Operator Policy",
+		ChainType: "ethereum",
+		Version:   "1.0",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"name":   "Check address in list",
+					"method": "*",
+					"action": "ALLOW",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "ethereum_transaction",
+							"field":        "to",
+							"operator":     "in",
+							"value":        []string{"0xaddr1", "0xaddr2", "0xaddr3"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	tests := []struct {
+		name     string
+		to       string
+		expected PolicyDecision
+	}{
+		{"in_list", "0xaddr2", DecisionAllow},
+		{"not_in_list", "0xother", DecisionDeny},
+		{"case_insensitive", "0xADDR1", DecisionAllow},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			evalCtx := &EvaluationContext{
+				ChainType: "ethereum",
+				Method:    "eth_sendTransaction",
+				To:        strPtr(tt.to),
+				Timestamp: time.Now(),
+			}
+
+			result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if result.Decision != tt.expected {
+				t.Errorf("expected %v, got %v (reason: %s)", tt.expected, result.Decision, result.Reason)
+			}
+		})
+	}
+}
+
+// TestToBigIntConversions tests various type conversions to big.Int
+func TestToBigIntConversions(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	// Test different expected value types in policy conditions
+	makePolicy := func(value interface{}) *types.Policy {
+		return &types.Policy{
+			ID:        uuid.New(),
+			Name:      "BigInt Test Policy",
+			ChainType: "ethereum",
+			Version:   "1.0",
+			Rules: map[string]interface{}{
+				"rules": []interface{}{
+					map[string]interface{}{
+						"name":   "Test rule",
+						"method": "*",
+						"action": "ALLOW",
+						"conditions": []interface{}{
+							map[string]interface{}{
+								"field_source": "ethereum_transaction",
+								"field":        "value",
+								"operator":     "lte",
+								"value":        value,
+							},
+						},
+					},
+				},
+			},
+		}
+	}
+
+	tests := []struct {
+		name         string
+		policyValue  interface{}
+		actualValue  *big.Int
+		expected     PolicyDecision
+	}{
+		{"string_value", "1000", big.NewInt(500), DecisionAllow},
+		{"float64_value", float64(1000), big.NewInt(500), DecisionAllow},
+		{"int_value", int(1000), big.NewInt(500), DecisionAllow},
+		{"int64_value", int64(1000), big.NewInt(500), DecisionAllow},
+		{"big_int_pointer", big.NewInt(1000), big.NewInt(500), DecisionAllow},
+		{"hex_string", "0x3e8", big.NewInt(500), DecisionAllow}, // 0x3e8 = 1000
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			policy := makePolicy(tt.policyValue)
+			evalCtx := &EvaluationContext{
+				ChainType: "ethereum",
+				Method:    "eth_sendTransaction",
+				To:        strPtr("0x1234"),
+				Value:     tt.actualValue,
+				Timestamp: time.Now(),
+			}
+
+			result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if result.Decision != tt.expected {
+				t.Errorf("expected %v, got %v (reason: %s)", tt.expected, result.Decision, result.Reason)
+			}
+		})
+	}
+}
+
+// TestWildcardChainType tests that wildcard chain type matches any chain
+func TestWildcardChainType(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	policy := &types.Policy{
+		ID:        uuid.New(),
+		Name:      "Wildcard Chain Policy",
+		ChainType: "*",
+		Version:   "1.0",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"name":   "Allow all chains",
+					"method": "*",
+					"action": "ALLOW",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "ethereum_transaction",
+							"field":        "to",
+							"operator":     "eq",
+							"value":        "0x1234",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	tests := []struct {
+		chainType string
+		expected  PolicyDecision
+	}{
+		{"ethereum", DecisionAllow},
+		{"polygon", DecisionAllow},
+		{"arbitrum", DecisionAllow},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.chainType, func(t *testing.T) {
+			evalCtx := &EvaluationContext{
+				ChainType: tt.chainType,
+				Method:    "eth_sendTransaction",
+				To:        strPtr("0x1234"),
+				Timestamp: time.Now(),
+			}
+
+			result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if result.Decision != tt.expected {
+				t.Errorf("expected %v, got %v (reason: %s)", tt.expected, result.Decision, result.Reason)
+			}
+		})
+	}
+}
+
+// TestParsePolicySchemaErrors tests error handling in parsePolicySchema
+func TestParsePolicySchemaErrors(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	tests := []struct {
+		name     string
+		policy   *types.Policy
+		expected PolicyDecision
+	}{
+		{
+			name: "rules_not_array",
+			policy: &types.Policy{
+				ID:        uuid.New(),
+				Name:      "Invalid Policy",
+				ChainType: "ethereum",
+				Version:   "1.0",
+				Rules: map[string]interface{}{
+					"rules": "not an array",
+				},
+			},
+			expected: DecisionDeny, // Should deny due to no valid rules
+		},
+		{
+			name: "rule_not_map",
+			policy: &types.Policy{
+				ID:        uuid.New(),
+				Name:      "Invalid Policy",
+				ChainType: "ethereum",
+				Version:   "1.0",
+				Rules: map[string]interface{}{
+					"rules": []interface{}{
+						"not a map",
+					},
+				},
+			},
+			expected: DecisionDeny,
+		},
+		{
+			name: "conditions_not_array",
+			policy: &types.Policy{
+				ID:        uuid.New(),
+				Name:      "Invalid Policy",
+				ChainType: "ethereum",
+				Version:   "1.0",
+				Rules: map[string]interface{}{
+					"rules": []interface{}{
+						map[string]interface{}{
+							"name":       "Test",
+							"method":     "*",
+							"action":     "ALLOW",
+							"conditions": "not an array",
+						},
+					},
+				},
+			},
+			expected: DecisionDeny,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			evalCtx := &EvaluationContext{
+				ChainType: "ethereum",
+				Method:    "eth_sendTransaction",
+				To:        strPtr("0x1234"),
+				Timestamp: time.Now(),
+			}
+
+			result, err := engine.Evaluate(ctx, []*types.Policy{tt.policy}, evalCtx)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if result.Decision != tt.expected {
+				t.Errorf("expected %v, got %v (reason: %s)", tt.expected, result.Decision, result.Reason)
+			}
+		})
+	}
+}
+
+// TestNilToValue tests nil 'to' address in transaction
+func TestNilToValue(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	policy := &types.Policy{
+		ID:        uuid.New(),
+		Name:      "Nil To Policy",
+		ChainType: "ethereum",
+		Version:   "1.0",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"name":   "Check to address",
+					"method": "*",
+					"action": "ALLOW",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "ethereum_transaction",
+							"field":        "to",
+							"operator":     "eq",
+							"value":        "0x1234",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	evalCtx := &EvaluationContext{
+		ChainType: "ethereum",
+		Method:    "eth_sendTransaction",
+		To:        nil, // Contract creation has nil 'to'
+		Timestamp: time.Now(),
+	}
+
+	result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Nil 'to' should not match
+	if result.Decision != DecisionDeny {
+		t.Errorf("expected deny for nil 'to', got allow")
+	}
+}
+
+// TestNilValueField tests nil 'value' in transaction
+func TestNilValueField(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	policy := &types.Policy{
+		ID:        uuid.New(),
+		Name:      "Nil Value Policy",
+		ChainType: "ethereum",
+		Version:   "1.0",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"name":   "Check value",
+					"method": "*",
+					"action": "ALLOW",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "ethereum_transaction",
+							"field":        "value",
+							"operator":     "lte",
+							"value":        "1000",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	evalCtx := &EvaluationContext{
+		ChainType: "ethereum",
+		Method:    "eth_sendTransaction",
+		To:        strPtr("0x1234"),
+		Value:     nil,
+		Timestamp: time.Now(),
+	}
+
+	result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Nil value should not match
+	if result.Decision != DecisionDeny {
+		t.Errorf("expected deny for nil value, got allow")
+	}
+}
+
+// TestAddressCaseInsensitivity tests that address comparison is case-insensitive
+func TestAddressCaseInsensitivity(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	policy := &types.Policy{
+		ID:        uuid.New(),
+		Name:      "Case Test Policy",
+		ChainType: "ethereum",
+		Version:   "1.0",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"name":   "Allow address",
+					"method": "*",
+					"action": "ALLOW",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "ethereum_transaction",
+							"field":        "to",
+							"operator":     "eq",
+							"value":        "0xABCdef1234567890ABCDEF1234567890abcdef12",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	tests := []struct {
+		name     string
+		to       string
+		expected PolicyDecision
+	}{
+		{
+			name:     "lowercase_matches",
+			to:       "0xabcdef1234567890abcdef1234567890abcdef12",
+			expected: DecisionAllow,
+		},
+		{
+			name:     "uppercase_matches",
+			to:       "0xABCDEF1234567890ABCDEF1234567890ABCDEF12",
+			expected: DecisionAllow,
+		},
+		{
+			name:     "mixed_case_matches",
+			to:       "0xAbCdEf1234567890AbCdEf1234567890AbCdEf12",
+			expected: DecisionAllow,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			evalCtx := &EvaluationContext{
+				ChainType: "ethereum",
+				Method:    "eth_sendTransaction",
+				To:        strPtr(tt.to),
+				Value:     big.NewInt(0),
+				Timestamp: time.Now(),
+			}
+
+			result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if result.Decision != tt.expected {
+				t.Errorf("expected %v, got %v (reason: %s)", tt.expected, result.Decision, result.Reason)
+			}
+		})
+	}
+}
+
+// TestToBigIntJsonNumber tests json.Number type conversion
+func TestToBigIntJsonNumber(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	// Create a policy with numeric comparison
+	policy := &types.Policy{
+		ID:        uuid.New(),
+		Name:      "Value Check",
+		ChainType: "ethereum",
+		Version:   "1.0",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"name":   "Check value",
+					"method": "*",
+					"action": "ALLOW",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "ethereum_transaction",
+							"field":        "value",
+							"operator":     "lte",
+							"value":        "1000000000000000000", // 1 ETH
+						},
+					},
+				},
+			},
+		},
+	}
+
+	evalCtx := &EvaluationContext{
+		ChainType: "ethereum",
+		Method:    "eth_sendTransaction",
+		To:        strPtr("0x1234567890123456789012345678901234567890"),
+		Value:     big.NewInt(500000000000000000), // 0.5 ETH
+		Timestamp: time.Now(),
+	}
+
+	result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Decision != DecisionAllow {
+		t.Errorf("expected allow, got %v", result.Decision)
+	}
+}
+
+// TestToBigIntInvalidString tests that invalid strings in toBigInt comparison
+func TestToBigIntInvalidString(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	// Policy with invalid string value for comparison
+	// When both values can't be converted to big.Int, compareBigInt returns 0
+	// For "lte" (<=), 0 <= 0 is true, so condition matches
+	policy := &types.Policy{
+		ID:        uuid.New(),
+		Name:      "Invalid Value Check",
+		ChainType: "ethereum",
+		Version:   "1.0",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"name":   "Check value",
+					"method": "*",
+					"action": "ALLOW",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "ethereum_transaction",
+							"field":        "value",
+							"operator":     "lte",
+							"value":        "not_a_number", // Invalid string
+						},
+					},
+				},
+			},
+		},
+	}
+
+	evalCtx := &EvaluationContext{
+		ChainType: "ethereum",
+		Method:    "eth_sendTransaction",
+		To:        strPtr("0x1234567890123456789012345678901234567890"),
+		Value:     big.NewInt(100),
+		Timestamp: time.Now(),
+	}
+
+	result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// When expected value can't be converted, compareBigInt returns 0
+	// For lte (<=), 0 <= 0 is true, so condition matches and ALLOW is returned
+	if result.Decision != DecisionAllow {
+		t.Errorf("expected allow (compareBigInt returns 0 for invalid values), got %v", result.Decision)
+	}
+}
+
+// TestCompareBigIntWithNilValues tests compareBigInt behavior with nil conversion
+func TestCompareBigIntWithNilValues(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	// Use a boolean which can't be converted to big.Int
+	policy := &types.Policy{
+		ID:        uuid.New(),
+		Name:      "Bool Check",
+		ChainType: "ethereum",
+		Version:   "1.0",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"name":   "Invalid compare",
+					"method": "*",
+					"action": "ALLOW",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "ethereum_transaction",
+							"field":        "value",
+							"operator":     "gt",
+							"value":        true, // boolean - can't convert to big.Int
+						},
+					},
+				},
+			},
+		},
+	}
+
+	evalCtx := &EvaluationContext{
+		ChainType: "ethereum",
+		Method:    "eth_sendTransaction",
+		To:        strPtr("0x1234567890123456789012345678901234567890"),
+		Value:     big.NewInt(100),
+		Timestamp: time.Now(),
+	}
+
+	result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// compareBigInt returns 0 when conversion fails, so gt returns false
+	// Condition doesn't match, rule doesn't apply, default deny
+	if result.Decision != DecisionDeny {
+		t.Errorf("expected deny, got %v", result.Decision)
+	}
+}
+
+// TestParseRuleWithNonMapCondition tests parseRule when condition is not a map
+// Non-map conditions are silently skipped in parseRule
+func TestParseRuleWithNonMapCondition(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	// Policy with ONLY a non-map condition (all conditions skipped = rule has no conditions)
+	// When a rule has no conditions, it doesn't match any request
+	policy := &types.Policy{
+		ID:        uuid.New(),
+		Name:      "Bad Condition Only",
+		ChainType: "ethereum",
+		Version:   "1.0",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"name":   "Skips bad condition",
+					"method": "*",
+					"action": "ALLOW",
+					"conditions": []interface{}{
+						"not_a_map", // This is not a map - will be skipped
+					},
+				},
+			},
+		},
+	}
+
+	evalCtx := &EvaluationContext{
+		ChainType: "ethereum",
+		Method:    "eth_sendTransaction",
+		To:        strPtr("0x1234567890123456789012345678901234567890"),
+		Value:     big.NewInt(0),
+		Timestamp: time.Now(),
+	}
+
+	result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Non-map condition is skipped, leaving rule with no conditions
+	// A rule with no parsed conditions still evaluates (vacuously true)
+	// Result depends on implementation - test documents actual behavior
+	// Current behavior: returns DENY (no rules match)
+	if result.Decision != DecisionDeny {
+		t.Errorf("expected deny, got %v", result.Decision)
+	}
+}
+
+// TestValidateConditionMissingField tests validation error for missing 'field'
+func TestValidateConditionMissingField(t *testing.T) {
+	engine := NewEngine()
+
+	policy := &types.Policy{
+		Name:      "Missing Field",
+		ChainType: "ethereum",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"method": "eth_sendTransaction",
+					"action": "ALLOW",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "ethereum_transaction",
+							// "field" is missing
+							"operator": "eq",
+							"value":    "0x123",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	err := engine.ValidatePolicy(policy)
+	if err == nil {
+		t.Error("expected error for missing 'field'")
+	}
+	if !strings.Contains(err.Error(), "missing 'field'") {
+		t.Errorf("expected error about missing 'field', got: %v", err)
+	}
+}
+
+// TestValidateConditionMissingValue tests validation error for missing 'value'
+func TestValidateConditionMissingValue(t *testing.T) {
+	engine := NewEngine()
+
+	policy := &types.Policy{
+		Name:      "Missing Value",
+		ChainType: "ethereum",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"method": "eth_sendTransaction",
+					"action": "ALLOW",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "ethereum_transaction",
+							"field":        "to",
+							"operator":     "eq",
+							// "value" is missing
+						},
+					},
+				},
+			},
+		},
+	}
+
+	err := engine.ValidatePolicy(policy)
+	if err == nil {
+		t.Error("expected error for missing 'value'")
+	}
+	if !strings.Contains(err.Error(), "missing 'value'") {
+		t.Errorf("expected error about missing 'value', got: %v", err)
+	}
+}
+
+// TestValidateConditionMissingOperator tests validation error for missing 'operator'
+func TestValidateConditionMissingOperator(t *testing.T) {
+	engine := NewEngine()
+
+	policy := &types.Policy{
+		Name:      "Missing Operator",
+		ChainType: "ethereum",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"method": "eth_sendTransaction",
+					"action": "ALLOW",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "ethereum_transaction",
+							"field":        "to",
+							// "operator" is missing
+							"value": "0x123",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	err := engine.ValidatePolicy(policy)
+	if err == nil {
+		t.Error("expected error for missing 'operator'")
+	}
+	if !strings.Contains(err.Error(), "missing 'operator'") {
+		t.Errorf("expected error about missing 'operator', got: %v", err)
+	}
+}
+
+// TestValidateConditionNotValidObject tests validation error when condition is not a valid object
+func TestValidateConditionNotValidObject(t *testing.T) {
+	engine := NewEngine()
+
+	policy := &types.Policy{
+		Name:      "Invalid Condition Object",
+		ChainType: "ethereum",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"method": "eth_sendTransaction",
+					"action": "ALLOW",
+					"conditions": []interface{}{
+						123, // Not a valid object (int instead of map)
+					},
+				},
+			},
+		},
+	}
+
+	err := engine.ValidatePolicy(policy)
+	if err == nil {
+		t.Error("expected error for invalid condition object")
+	}
+	if !strings.Contains(err.Error(), "not a valid object") {
+		t.Errorf("expected error about invalid object, got: %v", err)
+	}
+}
+
+// TestUnknownOperatorReturnsNoMatch tests that unknown operators don't match
+func TestUnknownOperatorReturnsNoMatch(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	policy := &types.Policy{
+		ID:        uuid.New(),
+		Name:      "Unknown Operator",
+		ChainType: "ethereum",
+		Version:   "1.0",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"name":   "Unknown op",
+					"method": "*",
+					"action": "ALLOW",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "ethereum_transaction",
+							"field":        "to",
+							"operator":     "unknown_op", // Invalid operator
+							"value":        "0x1234567890123456789012345678901234567890",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	evalCtx := &EvaluationContext{
+		ChainType: "ethereum",
+		Method:    "eth_sendTransaction",
+		To:        strPtr("0x1234567890123456789012345678901234567890"),
+		Value:     big.NewInt(0),
+		Timestamp: time.Now(),
+	}
+
+	result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Unknown operator returns false in compareValues, so condition doesn't match
+	if result.Decision != DecisionDeny {
+		t.Errorf("expected deny (unknown operator), got %v", result.Decision)
+	}
+}
+
+// TestMethodWildcardMatching tests that "*" method matches all methods
+func TestMethodWildcardMatching(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	policy := &types.Policy{
+		ID:        uuid.New(),
+		Name:      "Wildcard Method",
+		ChainType: "ethereum",
+		Version:   "1.0",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"name":   "Wildcard method",
+					"method": "*", // Wildcard
+					"action": "ALLOW",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "ethereum_transaction",
+							"field":        "to",
+							"operator":     "eq",
+							"value":        "0x1234567890123456789012345678901234567890",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	methods := []string{"eth_sendTransaction", "eth_signTypedData", "personal_sign", "custom_method"}
+
+	for _, method := range methods {
+		t.Run(method, func(t *testing.T) {
+			evalCtx := &EvaluationContext{
+				ChainType: "ethereum",
+				Method:    method,
+				To:        strPtr("0x1234567890123456789012345678901234567890"),
+				Value:     big.NewInt(0),
+				Timestamp: time.Now(),
+			}
+
+			result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if result.Decision != DecisionAllow {
+				t.Errorf("expected allow for method %s, got %v", method, result.Decision)
+			}
+		})
+	}
+}
+
+// TestMethodSpecificNotMatching tests that specific method doesn't match other methods
+func TestMethodSpecificNotMatching(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	policy := &types.Policy{
+		ID:        uuid.New(),
+		Name:      "Specific Method",
+		ChainType: "ethereum",
+		Version:   "1.0",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"name":   "Specific method",
+					"method": "eth_sendTransaction", // Only matches this specific method
+					"action": "ALLOW",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "ethereum_transaction",
+							"field":        "to",
+							"operator":     "eq",
+							"value":        "0x1234567890123456789012345678901234567890",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Should not match eth_signTypedData
+	evalCtx := &EvaluationContext{
+		ChainType: "ethereum",
+		Method:    "eth_signTypedData",
+		To:        strPtr("0x1234567890123456789012345678901234567890"),
+		Value:     big.NewInt(0),
+		Timestamp: time.Now(),
+	}
+
+	result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Method doesn't match, so rule doesn't apply, default deny
+	if result.Decision != DecisionDeny {
+		t.Errorf("expected deny (method doesn't match), got %v", result.Decision)
+	}
+}
+
+// TestMissingMethodDefaultsToWildcard tests that missing method defaults to "*"
+func TestMissingMethodDefaultsToWildcard(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	// Policy without explicit "method" field
+	policy := &types.Policy{
+		ID:        uuid.New(),
+		Name:      "No Method Specified",
+		ChainType: "ethereum",
+		Version:   "1.0",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"name": "No method",
+					// "method" is missing - defaults to "*"
+					"action": "ALLOW",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "ethereum_transaction",
+							"field":        "to",
+							"operator":     "eq",
+							"value":        "0x1234567890123456789012345678901234567890",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	evalCtx := &EvaluationContext{
+		ChainType: "ethereum",
+		Method:    "any_method",
+		To:        strPtr("0x1234567890123456789012345678901234567890"),
+		Value:     big.NewInt(0),
+		Timestamp: time.Now(),
+	}
+
+	result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Missing method defaults to "*", so should match
+	if result.Decision != DecisionAllow {
+		t.Errorf("expected allow (default wildcard method), got %v", result.Decision)
+	}
+}
+
+// TestMissingActionDefaultsToDeny tests that missing action defaults to "DENY"
+func TestMissingActionDefaultsToDeny(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	// Policy without explicit "action" field
+	policy := &types.Policy{
+		ID:        uuid.New(),
+		Name:      "No Action Specified",
+		ChainType: "ethereum",
+		Version:   "1.0",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"name":   "No action",
+					"method": "*",
+					// "action" is missing - defaults to DENY
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "ethereum_transaction",
+							"field":        "to",
+							"operator":     "eq",
+							"value":        "0x1234567890123456789012345678901234567890",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	evalCtx := &EvaluationContext{
+		ChainType: "ethereum",
+		Method:    "eth_sendTransaction",
+		To:        strPtr("0x1234567890123456789012345678901234567890"),
+		Value:     big.NewInt(0),
+		Timestamp: time.Now(),
+	}
+
+	result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Missing action defaults to DENY
+	if result.Decision != DecisionDeny {
+		t.Errorf("expected deny (default action), got %v", result.Decision)
+	}
+}
+
+// TestUnknownFieldSourceReturnsNil tests unknown field_source returns nil
+func TestUnknownFieldSourceReturnsNil(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	policy := &types.Policy{
+		ID:        uuid.New(),
+		Name:      "Unknown Field Source",
+		ChainType: "ethereum",
+		Version:   "1.0",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"name":   "Unknown source",
+					"method": "*",
+					"action": "ALLOW",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "unknown_source", // Invalid field source
+							"field":        "something",
+							"operator":     "eq",
+							"value":        "test",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	evalCtx := &EvaluationContext{
+		ChainType: "ethereum",
+		Method:    "eth_sendTransaction",
+		To:        strPtr("0x1234567890123456789012345678901234567890"),
+		Value:     big.NewInt(0),
+		Timestamp: time.Now(),
+	}
+
+	result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Unknown field source returns nil, condition doesn't match
+	if result.Decision != DecisionDeny {
+		t.Errorf("expected deny (unknown field source), got %v", result.Decision)
+	}
+}
+
+// TestEmptyConditionsArray tests rule with empty conditions array behavior
+func TestEmptyConditionsArray(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	policy := &types.Policy{
+		ID:        uuid.New(),
+		Name:      "Empty Conditions",
+		ChainType: "ethereum",
+		Version:   "1.0",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"name":       "No conditions",
+					"method":    "*",
+					"action":    "ALLOW",
+					"conditions": []interface{}{}, // Empty conditions array
+				},
+			},
+		},
+	}
+
+	evalCtx := &EvaluationContext{
+		ChainType: "ethereum",
+		Method:    "eth_sendTransaction",
+		To:        strPtr("0x1234567890123456789012345678901234567890"),
+		Value:     big.NewInt(0),
+		Timestamp: time.Now(),
+	}
+
+	result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Current behavior: empty conditions array results in no rule match
+	// This leads to default DENY
+	if result.Decision != DecisionDeny {
+		t.Errorf("expected deny (empty conditions doesn't match), got %v", result.Decision)
+	}
+}
+
+// TestNilCalldataField tests accessing calldata field when Calldata is nil
+func TestNilCalldataField(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	policy := &types.Policy{
+		ID:        uuid.New(),
+		Name:      "Calldata Check",
+		ChainType: "ethereum",
+		Version:   "1.0",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"name":   "Calldata",
+					"method": "*",
+					"action": "ALLOW",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "ethereum_calldata",
+							"field":        "function",
+							"operator":     "eq",
+							"value":        "transfer",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	evalCtx := &EvaluationContext{
+		ChainType:       "ethereum",
+		Method:          "eth_sendTransaction",
+		To:              strPtr("0x1234567890123456789012345678901234567890"),
+		Value:           big.NewInt(0),
+		DecodedCalldata: nil, // Nil calldata
+		Timestamp:       time.Now(),
+	}
+
+	result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Nil calldata returns nil, condition doesn't match
+	if result.Decision != DecisionDeny {
+		t.Errorf("expected deny (nil calldata), got %v", result.Decision)
+	}
+}
+
+// TestMultipleRulesFirstMatch tests that first matching rule wins
+func TestMultipleRulesFirstMatch(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	policy := &types.Policy{
+		ID:        uuid.New(),
+		Name:      "Multiple Rules",
+		ChainType: "ethereum",
+		Version:   "1.0",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"name":   "First Rule - DENY",
+					"method": "*",
+					"action": "DENY",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "ethereum_transaction",
+							"field":        "to",
+							"operator":     "eq",
+							"value":        "0x1234567890123456789012345678901234567890",
+						},
+					},
+				},
+				map[string]interface{}{
+					"name":   "Second Rule - ALLOW",
+					"method": "*",
+					"action": "ALLOW",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "ethereum_transaction",
+							"field":        "to",
+							"operator":     "eq",
+							"value":        "0x1234567890123456789012345678901234567890",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	evalCtx := &EvaluationContext{
+		ChainType: "ethereum",
+		Method:    "eth_sendTransaction",
+		To:        strPtr("0x1234567890123456789012345678901234567890"),
+		Value:     big.NewInt(0),
+		Timestamp: time.Now(),
+	}
+
+	result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// First rule matches first, so DENY
+	if result.Decision != DecisionDeny {
+		t.Errorf("expected deny (first rule wins), got %v", result.Decision)
+	}
+}
+
+// TestValuesEqualNonAddresses tests non-address value comparison
+func TestValuesEqualNonAddresses(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	policy := &types.Policy{
+		ID:        uuid.New(),
+		Name:      "String Compare",
+		ChainType: "ethereum",
+		Version:   "1.0",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"name":   "String equality",
+					"method": "*",
+					"action": "ALLOW",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "ethereum_typed_data_domain",
+							"field":        "name",
+							"operator":     "eq",
+							"value":        "MyDApp",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	tests := []struct {
+		name     string
+		domain   map[string]interface{}
+		expected PolicyDecision
+	}{
+		{
+			name:     "exact_match",
+			domain:   map[string]interface{}{"name": "MyDApp"},
+			expected: DecisionAllow,
+		},
+		{
+			name:     "case_sensitive_no_match",
+			domain:   map[string]interface{}{"name": "mydapp"},
+			expected: DecisionDeny,
+		},
+		{
+			name:     "different_value",
+			domain:   map[string]interface{}{"name": "OtherDApp"},
+			expected: DecisionDeny,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			evalCtx := &EvaluationContext{
+				ChainType:       "ethereum",
+				Method:          "eth_signTypedData",
+				TypedDataDomain: tt.domain,
+				Timestamp:       time.Now(),
+			}
+
+			result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if result.Decision != tt.expected {
+				t.Errorf("expected %v, got %v", tt.expected, result.Decision)
+			}
+		})
+	}
+}
