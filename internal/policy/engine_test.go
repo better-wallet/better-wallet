@@ -1925,14 +1925,14 @@ func TestToBigIntJsonNumber(t *testing.T) {
 	}
 }
 
-// TestToBigIntInvalidString tests that invalid strings in toBigInt comparison
+// TestToBigIntInvalidString tests that invalid strings in toBigInt comparison result in DENY
 func TestToBigIntInvalidString(t *testing.T) {
 	engine := NewEngine()
 	ctx := context.Background()
 
 	// Policy with invalid string value for comparison
-	// When both values can't be converted to big.Int, compareBigInt returns 0
-	// For "lte" (<=), 0 <= 0 is true, so condition matches
+	// When value can't be converted to big.Int, comparison returns false
+	// Condition doesn't match, so default-deny applies
 	policy := &types.Policy{
 		ID:        uuid.New(),
 		Name:      "Invalid Value Check",
@@ -1970,10 +1970,10 @@ func TestToBigIntInvalidString(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// When expected value can't be converted, compareBigInt returns 0
-	// For lte (<=), 0 <= 0 is true, so condition matches and ALLOW is returned
-	if result.Decision != DecisionAllow {
-		t.Errorf("expected allow (compareBigInt returns 0 for invalid values), got %v", result.Decision)
+	// When expected value can't be converted, compareBigInt returns ok=false
+	// Condition doesn't match, default-deny applies
+	if result.Decision != DecisionDeny {
+		t.Errorf("expected deny (invalid comparison should not match), got %v", result.Decision)
 	}
 }
 
@@ -2538,10 +2538,10 @@ func TestEmptyConditionsArray(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Current behavior: empty conditions array results in no rule match
-	// This leads to default DENY
-	if result.Decision != DecisionDeny {
-		t.Errorf("expected deny (empty conditions doesn't match), got %v", result.Decision)
+	// Empty conditions array means "no restrictions" - rule matches all requests
+	// This is the intended behavior for catch-all rules
+	if result.Decision != DecisionAllow {
+		t.Errorf("expected allow (empty conditions matches all), got %v", result.Decision)
 	}
 }
 
@@ -2724,5 +2724,284 @@ func TestValuesEqualNonAddresses(t *testing.T) {
 				t.Errorf("expected %v, got %v", tt.expected, result.Decision)
 			}
 		})
+	}
+}
+
+// =============================================================================
+// Edge Case Tests - Security-critical boundary conditions
+// =============================================================================
+
+func TestCompareBigInt_InvalidInput(t *testing.T) {
+	engine := NewEngine()
+
+	testCases := []struct {
+		name     string
+		actual   interface{}
+		expected interface{}
+	}{
+		{
+			name:     "invalid_string_vs_valid_number",
+			actual:   "not_a_number",
+			expected: "1000000000000000000",
+		},
+		{
+			name:     "empty_string_vs_valid_number",
+			actual:   "",
+			expected: "1000000000000000000",
+		},
+		{
+			name:     "only_0x_prefix",
+			actual:   "0x",
+			expected: "1000000000000000000",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, ok := engine.compareBigInt(tc.actual, tc.expected)
+			if ok {
+				t.Errorf("compareBigInt should return ok=false for invalid input '%v'", tc.actual)
+			}
+		})
+	}
+}
+
+func TestToBigInt_EdgeCases(t *testing.T) {
+	engine := NewEngine()
+
+	testCases := []struct {
+		name        string
+		input       interface{}
+		expectNil   bool
+		expectValue *big.Int
+	}{
+		{"empty_string", "", true, nil},
+		{"only_0x_prefix", "0x", true, nil},
+		{"invalid_hex", "0xGGGG", true, nil},
+		{"valid_decimal", "1000000000000000000", false, big.NewInt(1000000000000000000)},
+		{"valid_hex", "0xde0b6b3a7640000", false, nil},
+		{"negative_number", "-1", false, nil},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := engine.toBigInt(tc.input)
+			if tc.expectNil && result != nil {
+				t.Errorf("expected nil for input %v, got %v", tc.input, result)
+			}
+			if !tc.expectNil && result == nil {
+				t.Errorf("expected non-nil for input %v", tc.input)
+			}
+			if tc.expectValue != nil && result != nil && result.Cmp(tc.expectValue) != 0 {
+				t.Errorf("value mismatch: expected %v, got %v", tc.expectValue, result)
+			}
+		})
+	}
+}
+
+func TestPolicyEvaluation_NilValueShouldDeny(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	policy := &types.Policy{
+		ID:        uuid.New(),
+		Name:      "Limit to 1 ETH",
+		ChainType: "ethereum",
+		Version:   "1.0",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"name":   "Limit value",
+					"method": "eth_sendTransaction",
+					"action": "ALLOW",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "ethereum_transaction",
+							"field":        "value",
+							"operator":     "lte",
+							"value":        "1000000000000000000",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	evalCtx := &EvaluationContext{
+		Method:    "eth_sendTransaction",
+		ChainType: "ethereum",
+		Value:     nil,
+		Timestamp: time.Now(),
+	}
+
+	result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Decision != DecisionDeny {
+		t.Errorf("nil value should result in DENY, got %v", result.Decision)
+	}
+}
+
+func TestAddressComparison_CaseSensitivity(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	targetAddr := "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+
+	policy := &types.Policy{
+		ID:        uuid.New(),
+		Name:      "Allow USDC",
+		ChainType: "ethereum",
+		Version:   "1.0",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"name":   "Allow USDC",
+					"method": "eth_sendTransaction",
+					"action": "ALLOW",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "ethereum_transaction",
+							"field":        "to",
+							"operator":     "eq",
+							"value":        targetAddr,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	testCases := []struct {
+		name   string
+		toAddr string
+	}{
+		{"exact_match", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"},
+		{"lowercase", "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"},
+		{"uppercase", "0xA0B86991C6218B36C1D19D4A2E9EB0CE3606EB48"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			evalCtx := &EvaluationContext{
+				Method:    "eth_sendTransaction",
+				ChainType: "ethereum",
+				To:        strPtr(tc.toAddr),
+				Value:     big.NewInt(0),
+				Timestamp: time.Now(),
+			}
+
+			result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if result.Decision != DecisionAllow {
+				t.Errorf("address %s should match (case-insensitive), got %v", tc.toAddr, result.Decision)
+			}
+		})
+	}
+}
+
+func TestPolicyWithNilTo_ContractCreation(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	policy := &types.Policy{
+		ID:        uuid.New(),
+		Name:      "Block and Allow",
+		ChainType: "ethereum",
+		Version:   "1.0",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"name":   "Block attacker",
+					"method": "eth_sendTransaction",
+					"action": "DENY",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "ethereum_transaction",
+							"field":        "to",
+							"operator":     "eq",
+							"value":        "0xBAD0000000000000000000000000000000000BAD",
+						},
+					},
+				},
+				map[string]interface{}{
+					"name":   "Allow others",
+					"method": "*",
+					"action": "ALLOW",
+				},
+			},
+		},
+	}
+
+	evalCtx := &EvaluationContext{
+		Method:    "eth_sendTransaction",
+		ChainType: "ethereum",
+		To:        nil, // Contract creation
+		Value:     big.NewInt(0),
+		Timestamp: time.Now(),
+	}
+
+	result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Decision != DecisionAllow {
+		t.Errorf("nil To should not match address condition, should allow, got %v", result.Decision)
+	}
+}
+
+func TestBigIntOverflow_Uint256Max(t *testing.T) {
+	engine := NewEngine()
+	ctx := context.Background()
+
+	maxUint256 := "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+
+	policy := &types.Policy{
+		ID:        uuid.New(),
+		Name:      "Max uint256",
+		ChainType: "ethereum",
+		Version:   "1.0",
+		Rules: map[string]interface{}{
+			"rules": []interface{}{
+				map[string]interface{}{
+					"name":   "Allow up to max",
+					"method": "eth_sendTransaction",
+					"action": "ALLOW",
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"field_source": "ethereum_transaction",
+							"field":        "value",
+							"operator":     "lte",
+							"value":        maxUint256,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	largeValue := new(big.Int)
+	largeValue.SetString("115792089237316195423570985008687907853269984665640564039457584007913129639934", 10)
+
+	evalCtx := &EvaluationContext{
+		Method:    "eth_sendTransaction",
+		ChainType: "ethereum",
+		Value:     largeValue,
+		Timestamp: time.Now(),
+	}
+
+	result, err := engine.Evaluate(ctx, []*types.Policy{policy}, evalCtx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Decision != DecisionAllow {
+		t.Errorf("large value within limit should be allowed, got %v", result.Decision)
 	}
 }

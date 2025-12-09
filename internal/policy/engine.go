@@ -138,22 +138,34 @@ func (e *Engine) parsePolicySchema(policy *types.Policy) (*types.PolicySchema, e
 				continue
 			}
 
-			// Check if rule has valid field_source in conditions
-			if conditions, ok := ruleMap["conditions"].([]interface{}); ok && len(conditions) > 0 {
-				if firstCond, ok := conditions[0].(map[string]interface{}); ok {
-					if _, hasFieldSource := firstCond["field_source"]; hasFieldSource {
-						rule, err := e.parseRule(ruleMap)
-						if err != nil {
-							continue
-						}
-						schema.Rules = append(schema.Rules, *rule)
-						continue
+			// Check if rule has conditions
+			conditionsRaw, hasConditionsField := ruleMap["conditions"]
+			conditions, conditionsIsArray := conditionsRaw.([]interface{})
+
+			// If conditions field exists but is wrong type, reject as invalid
+			if hasConditionsField && !conditionsIsArray {
+				return nil, fmt.Errorf("invalid rule format: conditions must be an array")
+			}
+
+			// If conditions exist and have values, verify ALL conditions are valid maps with field_source
+			if conditionsIsArray && len(conditions) > 0 {
+				for i, cond := range conditions {
+					condMap, ok := cond.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("invalid rule format: condition %d must be a map", i)
+					}
+					if _, hasFieldSource := condMap["field_source"]; !hasFieldSource {
+						return nil, fmt.Errorf("invalid rule format: condition %d missing field_source", i)
 					}
 				}
 			}
 
-			// Invalid rule format
-			return nil, fmt.Errorf("invalid rule format: missing field_source in conditions")
+			// Parse rule (rules without conditions or with empty conditions are valid - they match all requests)
+			rule, err := e.parseRule(ruleMap)
+			if err != nil {
+				continue
+			}
+			schema.Rules = append(schema.Rules, *rule)
 		}
 
 		if len(schema.Rules) > 0 {
@@ -357,13 +369,17 @@ func (e *Engine) compareValues(actual interface{}, operator types.ConditionOpera
 	case types.OperatorNeq:
 		return !e.valuesEqual(actual, expected)
 	case types.OperatorLt:
-		return e.compareBigInt(actual, expected) < 0
+		cmp, ok := e.compareBigInt(actual, expected)
+		return ok && cmp < 0
 	case types.OperatorLte:
-		return e.compareBigInt(actual, expected) <= 0
+		cmp, ok := e.compareBigInt(actual, expected)
+		return ok && cmp <= 0
 	case types.OperatorGt:
-		return e.compareBigInt(actual, expected) > 0
+		cmp, ok := e.compareBigInt(actual, expected)
+		return ok && cmp > 0
 	case types.OperatorGte:
-		return e.compareBigInt(actual, expected) >= 0
+		cmp, ok := e.compareBigInt(actual, expected)
+		return ok && cmp >= 0
 	case types.OperatorIn:
 		return e.valueInArray(actual, expected)
 	case types.OperatorInConditionSet:
@@ -386,16 +402,19 @@ func (e *Engine) valuesEqual(actual, expected interface{}) bool {
 	return actualStr == expectedStr
 }
 
-// compareBigInt compares two values as big integers
-func (e *Engine) compareBigInt(actual, expected interface{}) int {
+// compareBigInt compares two values as big integers.
+// Returns (comparison result, true) if both values can be converted to big.Int.
+// Returns (0, false) if conversion fails - callers should treat this as "condition not matched".
+func (e *Engine) compareBigInt(actual, expected interface{}) (int, bool) {
 	actualBig := e.toBigInt(actual)
 	expectedBig := e.toBigInt(expected)
 
 	if actualBig == nil || expectedBig == nil {
-		return 0
+		// Conversion failed - return false to indicate comparison cannot be performed
+		return 0, false
 	}
 
-	return actualBig.Cmp(expectedBig)
+	return actualBig.Cmp(expectedBig), true
 }
 
 // toBigInt converts a value to big.Int
