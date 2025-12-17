@@ -321,7 +321,9 @@ func TestAuthMiddleware_Authenticate(t *testing.T) {
 		assert.Equal(t, http.StatusUnauthorized, rr.Code)
 	})
 
-	t.Run("app without auth settings", func(t *testing.T) {
+	t.Run("app without auth settings passes through for app-managed operations", func(t *testing.T) {
+		// When no Bearer token is present, middleware passes through
+		// This allows app-managed wallet operations that don't require user auth
 		app := &types.App{
 			Settings: types.AppSettings{
 				Auth: nil,
@@ -329,6 +331,36 @@ func TestAuthMiddleware_Authenticate(t *testing.T) {
 		}
 
 		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		ctx := context.WithValue(req.Context(), AppKey, app)
+		req = req.WithContext(ctx)
+		rr := httptest.NewRecorder()
+
+		nextHandlerCalled := false
+		nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			nextHandlerCalled = true
+			// Verify user_sub is NOT set (app-only request)
+			_, ok := GetUserSub(r.Context())
+			assert.False(t, ok, "user_sub should not be set for app-only requests")
+			w.WriteHeader(http.StatusOK)
+		})
+
+		handler := middleware.Authenticate(nextHandler)
+		handler.ServeHTTP(rr, req)
+
+		assert.True(t, nextHandlerCalled, "next handler should be called for app-only requests")
+		assert.Equal(t, http.StatusOK, rr.Code)
+	})
+
+	t.Run("app without auth settings returns error when Bearer token provided", func(t *testing.T) {
+		// When Bearer token IS present but auth settings are nil, should error
+		app := &types.App{
+			Settings: types.AppSettings{
+				Auth: nil,
+			},
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set("Authorization", "Bearer sometoken")
 		ctx := context.WithValue(req.Context(), AppKey, app)
 		req = req.WithContext(ctx)
 		rr := httptest.NewRecorder()
@@ -343,7 +375,8 @@ func TestAuthMiddleware_Authenticate(t *testing.T) {
 		assert.Equal(t, http.StatusUnauthorized, rr.Code)
 	})
 
-	t.Run("missing authorization header", func(t *testing.T) {
+	t.Run("missing authorization header passes through for app-managed operations", func(t *testing.T) {
+		// No Authorization header means app-only request, should pass through
 		app := &types.App{
 			Settings: types.AppSettings{
 				Auth: &types.AppAuthSettings{
@@ -360,17 +393,25 @@ func TestAuthMiddleware_Authenticate(t *testing.T) {
 		req = req.WithContext(ctx)
 		rr := httptest.NewRecorder()
 
+		nextHandlerCalled := false
 		nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			t.Error("should not reach next handler")
+			nextHandlerCalled = true
+			// Verify user_sub is NOT set
+			_, ok := GetUserSub(r.Context())
+			assert.False(t, ok, "user_sub should not be set for app-only requests")
+			w.WriteHeader(http.StatusOK)
 		})
 
 		handler := middleware.Authenticate(nextHandler)
 		handler.ServeHTTP(rr, req)
 
-		assert.Equal(t, http.StatusUnauthorized, rr.Code)
+		assert.True(t, nextHandlerCalled, "next handler should be called")
+		assert.Equal(t, http.StatusOK, rr.Code)
 	})
 
-	t.Run("invalid authorization header format", func(t *testing.T) {
+	t.Run("non-Bearer authorization header passes through for app-managed operations", func(t *testing.T) {
+		// Basic auth (not Bearer) is handled by AppAuthMiddleware
+		// AuthMiddleware should pass through for non-Bearer auth
 		app := &types.App{
 			Settings: types.AppSettings{
 				Auth: &types.AppAuthSettings{
@@ -388,14 +429,20 @@ func TestAuthMiddleware_Authenticate(t *testing.T) {
 		req = req.WithContext(ctx)
 		rr := httptest.NewRecorder()
 
+		nextHandlerCalled := false
 		nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			t.Error("should not reach next handler")
+			nextHandlerCalled = true
+			// Verify user_sub is NOT set
+			_, ok := GetUserSub(r.Context())
+			assert.False(t, ok, "user_sub should not be set for app-only requests")
+			w.WriteHeader(http.StatusOK)
 		})
 
 		handler := middleware.Authenticate(nextHandler)
 		handler.ServeHTTP(rr, req)
 
-		assert.Equal(t, http.StatusUnauthorized, rr.Code)
+		assert.True(t, nextHandlerCalled, "next handler should be called")
+		assert.Equal(t, http.StatusOK, rr.Code)
 	})
 
 	t.Run("malformed token", func(t *testing.T) {
