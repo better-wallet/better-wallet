@@ -36,9 +36,9 @@ type PolicyResponse struct {
 	Version   string                 `json:"version"`
 	Name      string                 `json:"name"`
 	ChainType string                 `json:"chain_type"`
-	Rules     map[string]interface{} `json:"rules"` // Stored as raw JSON for flexibility
-	OwnerID   uuid.UUID              `json:"owner_id"`
-	CreatedAt int64                  `json:"created_at"` // Unix timestamp in milliseconds
+	Rules     map[string]interface{} `json:"rules"`                  // Stored as raw JSON for flexibility
+	OwnerID   *uuid.UUID             `json:"owner_id,omitempty"`     // nil for app-owned policies
+	CreatedAt int64                  `json:"created_at"`             // Unix timestamp in milliseconds
 }
 
 // PolicyConditionInput represents a condition in the create request
@@ -159,13 +159,18 @@ func (s *Server) handleGetPolicy(w http.ResponseWriter, r *http.Request, policyI
 		return
 	}
 
-	// Verify ownership - check if the policy's owner key belongs to the authenticated user
-	authKeyRepo := storage.NewAuthorizationKeyRepository(s.store)
-	ownerKey, err := authKeyRepo.GetByID(r.Context(), policy.OwnerID)
-	if err != nil || ownerKey == nil || ownerKey.OwnerEntity != userSub {
-		s.writeError(w, apperrors.ErrForbidden)
-		return
+	// Verify ownership
+	// - App-owned policies (OwnerID is nil): app authentication is sufficient
+	// - User-owned policies (OwnerID is set): check if the owner key belongs to the authenticated user
+	if policy.OwnerID != nil {
+		authKeyRepo := storage.NewAuthorizationKeyRepository(s.store)
+		ownerKey, err := authKeyRepo.GetByID(r.Context(), *policy.OwnerID)
+		if err != nil || ownerKey == nil || ownerKey.OwnerEntity != userSub {
+			s.writeError(w, apperrors.ErrForbidden)
+			return
+		}
 	}
+	// For app-owned policies (OwnerID == nil), app auth middleware already verified access
 
 	response := convertPolicyToResponse(policy)
 	s.writeJSON(w, http.StatusOK, response)
@@ -260,12 +265,12 @@ func (s *Server) handleListPolicies(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleCreatePolicy creates a new policy
+// Supports two ownership models:
+// - User-owned: requires user auth + authorization signature, policy linked to authorization key
+// - App-owned: requires only app auth, policy has no owner_id (for app-managed wallets)
 func (s *Server) handleCreatePolicy(w http.ResponseWriter, r *http.Request) {
-	userSub, ok := getUserSub(r.Context())
-	if !ok {
-		s.writeError(w, apperrors.ErrUnauthorized)
-		return
-	}
+	// userSub is optional - nil for app-owned policies
+	userSub, hasUser := getUserSub(r.Context())
 
 	var req CreatePolicyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -296,15 +301,27 @@ func (s *Server) handleCreatePolicy(w http.ResponseWriter, r *http.Request) {
 	// Convert rules to storage format
 	rules := convertRulesToStorage(req.Rules)
 
-	// Determine owner ID
-	var ownerID uuid.UUID
+	// Determine owner ID based on authentication context
+	// - If user is authenticated and owner_id is provided/derivable: user-owned policy
+	// - If only app is authenticated (no user): app-owned policy (owner_id = nil)
+	var ownerID *uuid.UUID
+
 	if req.OwnerID != nil {
-		// Use provided authorization key ID
-		ownerID = *req.OwnerID
+		// Explicit owner_id provided - must have user auth to verify ownership
+		if !hasUser {
+			s.writeError(w, apperrors.NewWithDetail(
+				apperrors.ErrCodeBadRequest,
+				"User authentication required when specifying owner_id",
+				"Use user JWT to create user-owned policies, or omit owner_id for app-owned policies",
+				http.StatusBadRequest,
+			))
+			return
+		}
+		ownerID = req.OwnerID
 
 		// Verify the auth key exists and is active
 		authKeyRepo := storage.NewAuthorizationKeyRepository(s.store)
-		authKey, err := authKeyRepo.GetByID(r.Context(), ownerID)
+		authKey, err := authKeyRepo.GetByID(r.Context(), *ownerID)
 		if err != nil || authKey == nil || authKey.Status != types.StatusActive {
 			s.writeError(w, apperrors.NewWithDetail(
 				apperrors.ErrCodeBadRequest,
@@ -325,29 +342,53 @@ func (s *Server) handleCreatePolicy(w http.ResponseWriter, r *http.Request) {
 			))
 			return
 		}
-	} else {
-		// Use user's default (first active) authorization key
+
+		// Verify authorization signature against the owner key
+		if err := s.verifySignatureAgainstAuthKey(r, *ownerID); err != nil {
+			s.writeError(w, apperrors.NewWithDetail(
+				apperrors.ErrCodeForbidden,
+				"Invalid authorization signature",
+				err.Error(),
+				http.StatusForbidden,
+			))
+			return
+		}
+	} else if hasUser {
+		// User authenticated but no explicit owner_id - use user's default authorization key
 		authKeyRepo := storage.NewAuthorizationKeyRepository(s.store)
 		keys, err := authKeyRepo.GetActiveByOwnerEntity(r.Context(), userSub)
 		if err != nil || len(keys) == 0 {
 			s.writeError(w, apperrors.NewWithDetail(
 				apperrors.ErrCodeBadRequest,
 				"No active authorization key found",
-				"Create an authorization key first",
+				"Create an authorization key first, or omit user auth for app-owned policies",
 				http.StatusBadRequest,
 			))
 			return
 		}
-		ownerID = keys[0].ID
-	}
+		ownerID = &keys[0].ID
 
-	// Verify authorization signature against the owner key
-	if err := s.verifySignatureAgainstAuthKey(r, ownerID); err != nil {
+		// Verify authorization signature against the owner key
+		if err := s.verifySignatureAgainstAuthKey(r, *ownerID); err != nil {
+			s.writeError(w, apperrors.NewWithDetail(
+				apperrors.ErrCodeForbidden,
+				"Invalid authorization signature",
+				err.Error(),
+				http.StatusForbidden,
+			))
+			return
+		}
+	}
+	// else: app-owned policy (ownerID remains nil, no signature verification needed)
+
+	// Get app ID from context
+	appID, err := storage.RequireAppID(r.Context())
+	if err != nil {
 		s.writeError(w, apperrors.NewWithDetail(
-			apperrors.ErrCodeForbidden,
-			"Invalid authorization signature",
+			apperrors.ErrCodeInternalError,
+			"Missing app context",
 			err.Error(),
-			http.StatusForbidden,
+			http.StatusInternalServerError,
 		))
 		return
 	}
@@ -365,6 +406,7 @@ func (s *Server) handleCreatePolicy(w http.ResponseWriter, r *http.Request) {
 		Version:   version,
 		Rules:     rules,
 		OwnerID:   ownerID,
+		AppID:     &appID,
 	}
 
 	// Validate policy schema strictly before storing
@@ -599,9 +641,15 @@ func (s *Server) verifyPolicyAuthorizationSignature(r *http.Request, policyID uu
 		)
 	}
 
+	// For app-owned policies (OwnerID is nil), authorization signature is not required
+	// App authentication is sufficient
+	if policy.OwnerID == nil {
+		return nil
+	}
+
 	// Get the owner authorization key
 	authKeyRepo := storage.NewAuthorizationKeyRepository(s.store)
-	ownerKey, err := authKeyRepo.GetByID(r.Context(), policy.OwnerID)
+	ownerKey, err := authKeyRepo.GetByID(r.Context(), *policy.OwnerID)
 	if err != nil || ownerKey == nil {
 		return apperrors.New(
 			apperrors.ErrCodeInternalError,

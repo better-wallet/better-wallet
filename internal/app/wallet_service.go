@@ -519,9 +519,11 @@ func (s *WalletService) SignTransaction(ctx context.Context, userSub string, req
 		WalletID:      wallet.ID.String(),
 		ChainType:     wallet.ChainType,
 		Address:       wallet.Address,
+		Method:        "eth_signTransaction", // Required for policy method matching
 		To:            &req.To,
 		Value:         req.Value,
 		Data:          req.Data,
+		ChainID:       req.ChainID,
 		Actor:         userSub,
 		SessionSigner: sessionSigner,
 		Timestamp:     time.Now(),

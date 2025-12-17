@@ -78,13 +78,16 @@ const (
 )
 
 // Policy represents a policy that controls wallet operations
+// Ownership model:
+// - User-owned policies: OwnerID is set, references authorization_keys
+// - App-owned policies: OwnerID is nil, AppID determines ownership (for app-managed wallets)
 type Policy struct {
 	ID        uuid.UUID              `json:"id"`
 	Name      string                 `json:"name"`
 	ChainType string                 `json:"chain_type"`
 	Version   string                 `json:"version"`
 	Rules     map[string]interface{} `json:"rules"`
-	OwnerID   uuid.UUID              `json:"owner_id"` // Authorization key ID that owns this policy
+	OwnerID   *uuid.UUID             `json:"owner_id,omitempty"` // nil for app-owned policies
 	AppID     *uuid.UUID             `json:"app_id,omitempty"`
 	CreatedAt time.Time              `json:"created_at"`
 }

@@ -56,6 +56,8 @@ func NewAuthMiddleware() *AuthMiddleware {
 
 // Authenticate is the middleware function that validates JWT tokens
 // It reads auth configuration from App.Settings (set by AppAuthMiddleware)
+// For app-managed operations (no Bearer token), this middleware passes through
+// without setting user_sub, indicating an app-only authenticated request.
 func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Get app from context (set by AppAuthMiddleware)
@@ -70,32 +72,26 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 			return
 		}
 
-		// Get auth settings from app
+		// Extract token from Authorization header
+		authHeader := r.Header.Get("Authorization")
+
+		// Check for Bearer token - if no Bearer token present, this is an app-only request
+		// App authentication was already done by AppAuthMiddleware
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) != 2 || parts[0] != "Bearer" {
+			// No Bearer token - pass through for app-managed operations
+			// The handler should check for user_sub to determine if user context is required
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Get auth settings from app for JWT validation
 		authSettings := app.Settings.Auth
 		if authSettings == nil {
 			m.writeError(w, apperrors.NewWithDetail(
 				apperrors.ErrCodeUnauthorized,
 				"Auth not configured",
-				"App does not have auth settings configured",
-				http.StatusUnauthorized,
-			))
-			return
-		}
-
-		// Extract token from Authorization header
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			m.writeError(w, apperrors.ErrUnauthorized)
-			return
-		}
-
-		// Check for Bearer token
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || parts[0] != "Bearer" {
-			m.writeError(w, apperrors.NewWithDetail(
-				apperrors.ErrCodeUnauthorized,
-				"Invalid authorization header format",
-				"Expected 'Bearer <token>'",
+				"App does not have auth settings configured for user authentication",
 				http.StatusUnauthorized,
 			))
 			return

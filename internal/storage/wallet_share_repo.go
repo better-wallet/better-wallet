@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 
 	"github.com/better-wallet/better-wallet/pkg/types"
@@ -40,10 +41,13 @@ func (r *WalletShareRepository) CreateTx(ctx context.Context, db DBTX, share *ty
 		totalShares = 3 // Default total shares for SSS
 	}
 
+	// Base64 encode the encrypted blob for storage in text column
+	blobBase64 := base64.StdEncoding.EncodeToString(share.BlobEncrypted)
+
 	_, err := db.Exec(ctx, query,
 		share.WalletID,
 		share.ShareType,
-		share.BlobEncrypted,
+		blobBase64,
 		share.KMSKeyID,
 		threshold,
 		totalShares,
@@ -75,17 +79,24 @@ func (r *WalletShareRepository) GetByWalletID(ctx context.Context, walletID uuid
 	for rows.Next() {
 		var share types.WalletShare
 		var kmsKeyID *string
+		var blobBase64 string
 
 		err := rows.Scan(
 			&share.WalletID,
 			&share.ShareType,
-			&share.BlobEncrypted,
+			&blobBase64,
 			&kmsKeyID,
 			&share.Threshold,
 			&share.TotalShares,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan wallet share: %w", err)
+		}
+
+		// Base64 decode the encrypted blob
+		share.BlobEncrypted, err = base64.StdEncoding.DecodeString(blobBase64)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode blob: %w", err)
 		}
 
 		if kmsKeyID != nil {

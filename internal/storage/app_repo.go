@@ -22,7 +22,7 @@ func NewAppRepository(store *Store) *AppRepository {
 // GetByID retrieves an app by ID (used for auth validation)
 func (r *AppRepository) GetByID(ctx context.Context, id uuid.UUID) (*types.App, error) {
 	query := `
-		SELECT id, name, description, owner_user_id, status, settings, created_at, updated_at
+		SELECT id, name, description, owner_id, status, settings, created_at, updated_at
 		FROM apps
 		WHERE id = $1
 	`

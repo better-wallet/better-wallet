@@ -70,11 +70,9 @@ type TypeField struct {
 
 // handleRPC handles the unified RPC endpoint
 func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request, walletID uuid.UUID) {
-	userSub, ok := getUserSub(r.Context())
-	if !ok {
-		s.writeError(w, apperrors.ErrUnauthorized)
-		return
-	}
+	// userSub is optional for app-managed wallets (which don't have a user owner)
+	// The wallet service layer will validate ownership for user-owned wallets
+	userSub, _ := getUserSub(r.Context())
 
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -110,16 +108,9 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request, walletID uuid
 		return
 	}
 
+	// Signatures are optional for app-managed wallets (which don't require user authorization)
+	// The wallet service layer will validate signatures for user-owned wallets
 	signatures := auth.ExtractSignatures(r)
-	if len(signatures) == 0 {
-		s.writeError(w, apperrors.NewWithDetail(
-			apperrors.ErrCodeUnauthorized,
-			"Missing authorization signature",
-			"x-authorization-signature header required",
-			http.StatusUnauthorized,
-		))
-		return
-	}
 
 	// Route to appropriate handler based on method
 	switch rpcReq.Method {

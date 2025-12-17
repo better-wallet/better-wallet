@@ -197,13 +197,16 @@ export const walletShares = pgTable(
 )
 
 // Policies
+// Ownership model:
+// - User-owned policies: owner_id references authorization_keys, used for user wallet policies
+// - App-owned policies: owner_id is null, app_id determines ownership, used for app-managed wallet policies
 export const policies = pgTable('policies', {
   id: uuid('id').primaryKey().defaultRandom(),
   name: text('name').notNull(),
   chainType: text('chain_type').notNull().default('ethereum'),
   version: text('version').notNull().default('1.0'),
   rules: jsonb('rules').notNull().$type<PolicyRules>(),
-  ownerId: uuid('owner_id').notNull(), // references authorization_keys
+  ownerId: uuid('owner_id'), // nullable: null for app-owned policies, references authorization_keys for user-owned
   appId: uuid('app_id').references(() => apps.id, { onDelete: 'cascade' }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })

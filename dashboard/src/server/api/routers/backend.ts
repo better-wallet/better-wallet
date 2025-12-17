@@ -1,5 +1,6 @@
 import { and, desc, eq, sql } from 'drizzle-orm'
 import { z } from 'zod'
+import bcrypt from 'bcryptjs'
 import { db } from '@/server/db'
 import * as schema from '@/server/db/schema'
 import { createTRPCRouter, protectedProcedure } from '../trpc'
@@ -132,6 +133,8 @@ function compareBigInt(a: unknown, b: unknown): number {
 }
 
 // Generate a random secret
+// Note: The prefix must be exactly 14 characters to match the Go backend's lookup
+// Go middleware takes secret[:14] for prefix lookup, so we store "bw_sk_" + 8 chars = 14 chars
 function generateSecret(): { secret: string; prefix: string } {
   const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
   let randomPart = ''
@@ -139,17 +142,14 @@ function generateSecret(): { secret: string; prefix: string } {
     randomPart += chars.charAt(Math.floor(Math.random() * chars.length))
   }
   const secret = `bw_sk_${randomPart}`
-  const prefix = `${secret.substring(0, 10)}...`
+  // Store first 14 chars as prefix to match Go backend's lookup (secret[:14])
+  const prefix = secret.substring(0, 14)
   return { secret, prefix }
 }
 
-// Hash a secret for storage
+// Hash a secret for storage using bcrypt to match Go backend
 async function hashSecret(secret: string): Promise<string> {
-  const encoder = new TextEncoder()
-  const data = encoder.encode(secret)
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data)
-  const hashArray = Array.from(new Uint8Array(hashBuffer))
-  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('')
+  return bcrypt.hash(secret, 10)
 }
 
 /**
@@ -161,12 +161,14 @@ async function withTemporarySecret<T>(appId: string, callback: (secret: string) 
   const secretHash = await hashSecret(secret)
 
   // Create temporary secret
+  // IMPORTANT: secretPrefix must be exactly the first 14 chars of the secret
+  // to match the Go backend's lookup: secret[:14]
   const [tempSecret] = await db
     .insert(schema.appSecrets)
     .values({
       appId,
       secretHash,
-      secretPrefix: `[internal] ${prefix}`,
+      secretPrefix: prefix, // Must match Go backend's lookup format
       status: 'active',
     })
     .returning()
@@ -600,11 +602,13 @@ export const backendRouter = createTRPCRouter({
         })
       )
       .mutation(async ({ ctx, input }) => {
-        const { role, walletUser } = await checkAppAccess(ctx.session.user.id, input.appId)
+        const { role } = await checkAppAccess(ctx.session.user.id, input.appId)
         if (role === 'viewer') {
           throw new Error('Permission denied')
         }
 
+        // App-owned policies: ownerId is null (no user owner needed)
+        // User-owned policies: ownerId references an authorization key
         const [policy] = await db
           .insert(schema.policies)
           .values({
@@ -612,7 +616,7 @@ export const backendRouter = createTRPCRouter({
             chainType: input.chainType,
             version: input.version,
             rules: { rules: input.rules },
-            ownerId: input.ownerId ?? walletUser.id,
+            ownerId: input.ownerId ?? null, // null = app-owned policy
             appId: input.appId,
           })
           .returning()

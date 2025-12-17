@@ -303,12 +303,10 @@ func (s *Server) handleListWallets(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleCreateWallet handles wallet creation
+// For app-managed wallets (no owner), userSub may be empty - only app auth is required
 func (s *Server) handleCreateWallet(w http.ResponseWriter, r *http.Request) {
-	userSub, ok := getUserSub(r.Context())
-	if !ok {
-		s.writeError(w, apperrors.ErrUnauthorized)
-		return
-	}
+	// userSub is optional for app-managed wallets
+	userSub, _ := getUserSub(r.Context())
 
 	var req CreateWalletRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

@@ -1,12 +1,15 @@
 import { TRPCError } from '@trpc/server'
 import { eq } from 'drizzle-orm'
 import { z } from 'zod'
+import bcrypt from 'bcryptjs'
 import { db } from '@/server/db'
 import { appSecrets } from '@/server/db/schema'
 import { createTRPCRouter, protectedProcedure } from '../trpc'
 import { checkAppAccess, getOrCreateWalletUser } from './apps'
 
 // Generate a random secret with prefix
+// Note: The prefix must be exactly 14 characters to match the Go backend's lookup
+// Go middleware takes secret[:14] for prefix lookup, so we store "bw_sk_" + 8 chars = 14 chars
 function generateSecret(): { secret: string; prefix: string } {
   const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
   let randomPart = ''
@@ -14,17 +17,14 @@ function generateSecret(): { secret: string; prefix: string } {
     randomPart += chars.charAt(Math.floor(Math.random() * chars.length))
   }
   const secret = `bw_sk_${randomPart}`
-  const prefix = `${secret.substring(0, 10)}...`
+  // Store first 14 chars as prefix to match Go backend's lookup (secret[:14])
+  const prefix = secret.substring(0, 14)
   return { secret, prefix }
 }
 
-// Simple hash function (in production, use bcrypt)
+// Hash secret using bcrypt to match Go backend
 async function hashSecret(secret: string): Promise<string> {
-  const encoder = new TextEncoder()
-  const data = encoder.encode(secret)
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data)
-  const hashArray = Array.from(new Uint8Array(hashBuffer))
-  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('')
+  return bcrypt.hash(secret, 10)
 }
 
 export const appSecretsRouter = createTRPCRouter({
