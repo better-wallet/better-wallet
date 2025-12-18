@@ -21,6 +21,14 @@ func NewKeyQuorumRepository(store *Store) *KeyQuorumRepository {
 
 // Create creates a new key quorum
 func (r *KeyQuorumRepository) Create(ctx context.Context, kq *types.KeyQuorum) error {
+	if kq.AppID == nil {
+		appID, err := RequireAppID(ctx)
+		if err != nil {
+			return err
+		}
+		kq.AppID = &appID
+	}
+
 	query := `
 		INSERT INTO key_quorums (id, threshold, key_ids, status, app_id, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
@@ -43,14 +51,19 @@ func (r *KeyQuorumRepository) Create(ctx context.Context, kq *types.KeyQuorum) e
 
 // GetByID retrieves a key quorum by ID
 func (r *KeyQuorumRepository) GetByID(ctx context.Context, id uuid.UUID) (*types.KeyQuorum, error) {
+	appID, err := RequireAppID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT id, threshold, key_ids, status, app_id, created_at
 		FROM key_quorums
-		WHERE id = $1
+		WHERE id = $1 AND app_id = $2
 	`
 
 	var kq types.KeyQuorum
-	err := r.store.pool.QueryRow(ctx, query, id).Scan(
+	err = r.store.pool.QueryRow(ctx, query, id, appID).Scan(
 		&kq.ID,
 		&kq.Threshold,
 		&kq.KeyIDs,
@@ -130,10 +143,15 @@ func (r *KeyQuorumRepository) GetByAppID(ctx context.Context, appID uuid.UUID) (
 
 // Update updates a key quorum
 func (r *KeyQuorumRepository) Update(ctx context.Context, kq *types.KeyQuorum) error {
+	appID, err := RequireAppID(ctx)
+	if err != nil {
+		return err
+	}
+
 	query := `
 		UPDATE key_quorums
 		SET threshold = $2, key_ids = $3, status = $4
-		WHERE id = $1
+		WHERE id = $1 AND app_id = $5
 	`
 	result, err := r.store.pool.Exec(
 		ctx,
@@ -142,6 +160,7 @@ func (r *KeyQuorumRepository) Update(ctx context.Context, kq *types.KeyQuorum) e
 		kq.Threshold,
 		kq.KeyIDs,
 		kq.Status,
+		appID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update key quorum: %w", err)
@@ -154,8 +173,13 @@ func (r *KeyQuorumRepository) Update(ctx context.Context, kq *types.KeyQuorum) e
 
 // Delete deletes a key quorum
 func (r *KeyQuorumRepository) Delete(ctx context.Context, id uuid.UUID) error {
-	query := `DELETE FROM key_quorums WHERE id = $1`
-	result, err := r.store.pool.Exec(ctx, query, id)
+	appID, err := RequireAppID(ctx)
+	if err != nil {
+		return err
+	}
+
+	query := `DELETE FROM key_quorums WHERE id = $1 AND app_id = $2`
+	result, err := r.store.pool.Exec(ctx, query, id, appID)
 	if err != nil {
 		return fmt.Errorf("failed to delete key quorum: %w", err)
 	}

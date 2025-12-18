@@ -1,7 +1,10 @@
 package api
 
 import (
+	"crypto/elliptic"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -158,6 +161,17 @@ func (s *Server) handleListAuthorizationKeys(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	appID, err := storage.RequireAppID(r.Context())
+	if err != nil {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeUnauthorized,
+			"Missing app context",
+			err.Error(),
+			http.StatusUnauthorized,
+		))
+		return
+	}
+
 	// Get user
 	userRepo := storage.NewUserRepository(s.store)
 	user, err := userRepo.GetByExternalSub(r.Context(), userSub)
@@ -179,12 +193,12 @@ func (s *Server) handleListAuthorizationKeys(w http.ResponseWriter, r *http.Requ
 	sqlQuery := `
 		SELECT id, public_key, algorithm, owner_entity, status, created_at, rotated_at
 		FROM authorization_keys
-		WHERE owner_entity = $1
+		WHERE owner_entity = $1 AND app_id = $2
 	`
-	args := []interface{}{userSub}
+	args := []interface{}{userSub, appID}
 
 	if status != "" {
-		sqlQuery += ` AND status = $2`
+		sqlQuery += ` AND status = $3`
 		args = append(args, status)
 	}
 
@@ -452,13 +466,37 @@ func convertAuthorizationKeyToResponse(key *types.AuthorizationKey) Authorizatio
 
 // Helper functions for hex encoding/decoding public keys
 func encodeHexPublicKey(publicKey []byte) string {
-	return "0x" + string(publicKey) // Public key is already hex in storage
+	return "0x" + hex.EncodeToString(publicKey)
 }
 
 func decodeHexPublicKey(hexKey string) ([]byte, error) {
-	// Remove 0x prefix if present
-	if len(hexKey) >= 2 && hexKey[:2] == "0x" {
-		hexKey = hexKey[2:]
+	hexKey = strings.TrimSpace(hexKey)
+	hexKey = strings.TrimPrefix(hexKey, "0x")
+	if hexKey == "" {
+		return nil, fmt.Errorf("public key cannot be empty")
 	}
-	return []byte(hexKey), nil
+	if len(hexKey)%2 != 0 {
+		return nil, fmt.Errorf("public key hex must have even length")
+	}
+
+	publicKeyBytes, err := hex.DecodeString(hexKey)
+	if err != nil {
+		return nil, fmt.Errorf("public key must be hex-encoded: %w", err)
+	}
+
+	// Validate P-256 public key.
+	switch len(publicKeyBytes) {
+	case 33:
+		if x, _ := elliptic.UnmarshalCompressed(elliptic.P256(), publicKeyBytes); x == nil {
+			return nil, fmt.Errorf("invalid P-256 compressed public key")
+		}
+	case 65:
+		if x, _ := elliptic.Unmarshal(elliptic.P256(), publicKeyBytes); x == nil {
+			return nil, fmt.Errorf("invalid P-256 uncompressed public key")
+		}
+	default:
+		return nil, fmt.Errorf("invalid public key length: expected 33 (compressed) or 65 (uncompressed) bytes, got %d", len(publicKeyBytes))
+	}
+
+	return publicKeyBytes, nil
 }

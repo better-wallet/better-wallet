@@ -321,6 +321,30 @@ func TestAuthMiddleware_Authenticate(t *testing.T) {
 		assert.Equal(t, http.StatusUnauthorized, rr.Code)
 	})
 
+	t.Run("rejects deprecated user auth headers", func(t *testing.T) {
+		app := &types.App{
+			Settings: types.AppSettings{
+				Auth: nil,
+			},
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set("X-User-JWT", "some.jwt.token")
+		ctx := context.WithValue(req.Context(), AppKey, app)
+		req = req.WithContext(ctx)
+		rr := httptest.NewRecorder()
+
+		nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			t.Error("should not reach next handler")
+		})
+
+		handler := middleware.Authenticate(nextHandler)
+		handler.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusBadRequest, rr.Code)
+		assert.Contains(t, rr.Body.String(), "Unsupported user auth headers")
+	})
+
 	t.Run("app without auth settings passes through for app-managed operations", func(t *testing.T) {
 		// When no Bearer token is present, middleware passes through
 		// This allows app-managed wallet operations that don't require user auth

@@ -310,7 +310,20 @@ func (s *Server) handleCreateWallet(w http.ResponseWriter, r *http.Request) {
 	userSub, _ := getUserSub(r.Context())
 
 	var req CreateWalletRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeBadRequest,
+			"Failed to read request body",
+			err.Error(),
+			http.StatusBadRequest,
+		))
+		return
+	}
+	// Restore body so canonical payload/signature verification sees the original request body.
+	r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+	if err := json.Unmarshal(bodyBytes, &req); err != nil {
 		s.writeError(w, apperrors.NewWithDetail(
 			apperrors.ErrCodeBadRequest,
 			"Invalid request body",
@@ -842,10 +855,32 @@ func (s *Server) verifySignatureAgainstPublicKey(r *http.Request, publicKeyHex s
 		)
 	}
 
+	// Convert hex-encoded P-256 public key to PEM for signature verification.
+	// (Authorization signatures are verified against PEM-encoded public keys.)
+	pubKeyBytes, err := hex.DecodeString(strings.TrimPrefix(publicKeyHex, "0x"))
+	if err != nil {
+		return apperrors.NewWithDetail(
+			apperrors.ErrCodeBadRequest,
+			"Invalid owner public key",
+			"public_key must be a valid hex string",
+			http.StatusBadRequest,
+		)
+	}
+
+	publicKeyPEM, err := auth.PublicKeyToPEM(pubKeyBytes)
+	if err != nil {
+		return apperrors.NewWithDetail(
+			apperrors.ErrCodeBadRequest,
+			"Invalid owner public key",
+			err.Error(),
+			http.StatusBadRequest,
+		)
+	}
+
 	// Create a temporary owner struct for verification (single key type)
 	owner := &auth.Owner{
 		Type:      auth.OwnerTypeSingleKey,
-		PublicKey: publicKeyHex,
+		PublicKey: publicKeyPEM,
 	}
 
 	// Verify signature
@@ -1077,12 +1112,15 @@ func (s *Server) handleExportWallet(w http.ResponseWriter, r *http.Request, wall
 
 	// Mark wallet as exported
 	now := time.Now()
-	if _, err := s.store.DB().Exec(
-		r.Context(),
-		`UPDATE wallets SET exported_at = $1 WHERE id = $2`,
-		now,
-		walletID,
-	); err != nil {
+	if appID, err := storage.RequireAppID(r.Context()); err == nil {
+		_, _ = s.store.DB().Exec(
+			r.Context(),
+			`UPDATE wallets SET exported_at = $1 WHERE id = $2 AND app_id = $3`,
+			now,
+			walletID,
+			appID,
+		)
+	} else {
 		// Log but don't fail - export succeeded
 	}
 
@@ -1405,11 +1443,7 @@ func (s *Server) handleAuthenticateWallet(w http.ResponseWriter, r *http.Request
 }
 
 func getUserSub(ctx context.Context) (string, bool) {
-	userSub, ok := ctx.Value("user_sub").(string)
-	if !ok || userSub == "" {
-		return "", false
-	}
-	return userSub, true
+	return middleware.GetUserSub(ctx)
 }
 
 // writeJSON writes a JSON response

@@ -43,6 +43,14 @@ func NewTransactionRepository(store *Store) *TransactionRepository {
 
 // Create creates a new transaction record
 func (r *TransactionRepository) Create(ctx context.Context, tx *Transaction) error {
+	if tx.AppID == nil {
+		appID, err := RequireAppID(ctx)
+		if err != nil {
+			return err
+		}
+		tx.AppID = &appID
+	}
+
 	query := `
 		INSERT INTO transactions (
 			id, wallet_id, chain_id, tx_hash, status, method,
@@ -81,17 +89,22 @@ func (r *TransactionRepository) Create(ctx context.Context, tx *Transaction) err
 
 // GetByID retrieves a transaction by ID
 func (r *TransactionRepository) GetByID(ctx context.Context, id uuid.UUID) (*Transaction, error) {
+	appID, err := RequireAppID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT id, wallet_id, chain_id, tx_hash, status, method,
 			to_address, value, data, nonce, gas_limit,
 			max_fee_per_gas, max_priority_fee_per_gas, signed_tx, error_message,
 			app_id, created_at, updated_at
 		FROM transactions
-		WHERE id = $1
+		WHERE id = $1 AND app_id = $2
 	`
 
 	var tx Transaction
-	err := r.store.pool.QueryRow(ctx, query, id).Scan(
+	err = r.store.pool.QueryRow(ctx, query, id, appID).Scan(
 		&tx.ID,
 		&tx.WalletID,
 		&tx.ChainID,
@@ -167,17 +180,22 @@ func (r *TransactionRepository) GetByIDAndAppID(ctx context.Context, id, appID u
 
 // GetByTxHash retrieves a transaction by its on-chain hash
 func (r *TransactionRepository) GetByTxHash(ctx context.Context, txHash string) (*Transaction, error) {
+	appID, err := RequireAppID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT id, wallet_id, chain_id, tx_hash, status, method,
 			to_address, value, data, nonce, gas_limit,
 			max_fee_per_gas, max_priority_fee_per_gas, signed_tx, error_message,
 			app_id, created_at, updated_at
 		FROM transactions
-		WHERE tx_hash = $1
+		WHERE tx_hash = $1 AND app_id = $2
 	`
 
 	var tx Transaction
-	err := r.store.pool.QueryRow(ctx, query, txHash).Scan(
+	err = r.store.pool.QueryRow(ctx, query, txHash, appID).Scan(
 		&tx.ID,
 		&tx.WalletID,
 		&tx.ChainID,
@@ -214,18 +232,23 @@ func (r *TransactionRepository) ListByWalletID(ctx context.Context, walletID uui
 		limit = 100
 	}
 
+	appID, err := RequireAppID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT id, wallet_id, chain_id, tx_hash, status, method,
 			to_address, value, data, nonce, gas_limit,
 			max_fee_per_gas, max_priority_fee_per_gas, signed_tx, error_message,
 			app_id, created_at, updated_at
 		FROM transactions
-		WHERE wallet_id = $1
+		WHERE wallet_id = $1 AND app_id = $2
 		ORDER BY created_at DESC
-		LIMIT $2
+		LIMIT $3
 	`
 
-	rows, err := r.store.pool.Query(ctx, query, walletID, limit)
+	rows, err := r.store.pool.Query(ctx, query, walletID, appID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list transactions: %w", err)
 	}
@@ -268,18 +291,23 @@ func (r *TransactionRepository) ListByWalletIDs(ctx context.Context, walletIDs [
 		limit = 100
 	}
 
+	appID, err := RequireAppID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT id, wallet_id, chain_id, tx_hash, status, method,
 			to_address, value, data, nonce, gas_limit,
 			max_fee_per_gas, max_priority_fee_per_gas, signed_tx, error_message,
 			app_id, created_at, updated_at
 		FROM transactions
-		WHERE wallet_id = ANY($1)
+		WHERE wallet_id = ANY($1) AND app_id = $2
 		ORDER BY created_at DESC
-		LIMIT $2
+		LIMIT $3
 	`
 
-	rows, err := r.store.pool.Query(ctx, query, walletIDs, limit)
+	rows, err := r.store.pool.Query(ctx, query, walletIDs, appID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list transactions: %w", err)
 	}
@@ -372,13 +400,18 @@ func (r *TransactionRepository) GetByAppID(ctx context.Context, appID uuid.UUID,
 
 // UpdateStatus updates the status of a transaction
 func (r *TransactionRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status string, txHash *string, errorMessage *string) error {
+	appID, err := RequireAppID(ctx)
+	if err != nil {
+		return err
+	}
+
 	query := `
 		UPDATE transactions
 		SET status = $2, tx_hash = COALESCE($3, tx_hash), error_message = $4, updated_at = NOW()
-		WHERE id = $1
+		WHERE id = $1 AND app_id = $5
 	`
 
-	_, err := r.store.pool.Exec(ctx, query, id, status, txHash, errorMessage)
+	_, err = r.store.pool.Exec(ctx, query, id, status, txHash, errorMessage, appID)
 	if err != nil {
 		return fmt.Errorf("failed to update transaction status: %w", err)
 	}

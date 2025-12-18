@@ -22,6 +22,14 @@ func NewPolicyRepository(store *Store) *PolicyRepository {
 
 // Create creates a new policy
 func (r *PolicyRepository) Create(ctx context.Context, policy *types.Policy) error {
+	if policy.AppID == nil {
+		appID, err := RequireAppID(ctx)
+		if err != nil {
+			return err
+		}
+		policy.AppID = &appID
+	}
+
 	rulesJSON, err := json.Marshal(policy.Rules)
 	if err != nil {
 		return fmt.Errorf("failed to marshal rules: %w", err)
@@ -52,16 +60,21 @@ func (r *PolicyRepository) Create(ctx context.Context, policy *types.Policy) err
 
 // GetByID retrieves a policy by ID
 func (r *PolicyRepository) GetByID(ctx context.Context, id uuid.UUID) (*types.Policy, error) {
+	appID, err := RequireAppID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT id, name, chain_type, version, rules, owner_id, app_id, created_at
 		FROM policies
-		WHERE id = $1
+		WHERE id = $1 AND app_id = $2
 	`
 
 	var policy types.Policy
 	var rulesJSON []byte
 
-	err := r.store.pool.QueryRow(ctx, query, id).Scan(
+	err = r.store.pool.QueryRow(ctx, query, id, appID).Scan(
 		&policy.ID,
 		&policy.Name,
 		&policy.ChainType,
@@ -122,14 +135,19 @@ func (r *PolicyRepository) GetByIDAndAppID(ctx context.Context, id, appID uuid.U
 
 // GetByWalletID retrieves all policies associated with a wallet
 func (r *PolicyRepository) GetByWalletID(ctx context.Context, walletID uuid.UUID) ([]*types.Policy, error) {
+	appID, err := RequireAppID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT p.id, p.name, p.chain_type, p.version, p.rules, p.owner_id, p.app_id, p.created_at
 		FROM policies p
 		INNER JOIN wallet_policies wp ON p.id = wp.policy_id
-		WHERE wp.wallet_id = $1
+		WHERE wp.wallet_id = $1 AND p.app_id = $2
 	`
 
-	rows, err := r.store.pool.Query(ctx, query, walletID)
+	rows, err := r.store.pool.Query(ctx, query, walletID, appID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get policies by wallet ID: %w", err)
 	}

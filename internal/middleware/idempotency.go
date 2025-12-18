@@ -53,6 +53,16 @@ func (m *IdempotencyMiddleware) Handle(next http.Handler) http.Handler {
 			return
 		}
 
+		// Scope idempotency to the authenticated user (when present) to prevent
+		// replaying user-scoped operations without a user context.
+		//
+		// Note: the header value is still validated for length; the scoped key is
+		// an internal storage detail.
+		scopedKey := idempotencyKey
+		if userSub, ok := GetUserSub(r.Context()); ok && userSub != "" {
+			scopedKey = userSub + ":" + idempotencyKey
+		}
+
 		// Get app ID from header
 		appID := r.Header.Get("x-app-id")
 		if appID == "" {
@@ -84,7 +94,7 @@ func (m *IdempotencyMiddleware) Handle(next http.Handler) http.Handler {
 		bodyHash := computeBodyHash(bodyBytes)
 
 		// Check if this key was used before (scoped to app+key+method+url)
-		record, err := m.repo.Get(r.Context(), appID, idempotencyKey, r.Method, r.URL.Path)
+		record, err := m.repo.Get(r.Context(), appID, scopedKey, r.Method, r.URL.Path)
 		if err == nil {
 			// Key exists - check if body matches
 			if record.BodyHash == bodyHash {
@@ -120,7 +130,7 @@ func (m *IdempotencyMiddleware) Handle(next http.Handler) http.Handler {
 			AppID:      appID,
 			Method:     r.Method,
 			URL:        r.URL.Path,
-			Key:        idempotencyKey,
+			Key:        scopedKey,
 			BodyHash:   bodyHash,
 			StatusCode: recorder.statusCode,
 			Headers:    recorder.headers,

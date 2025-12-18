@@ -2,7 +2,6 @@ package middleware
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -25,8 +24,17 @@ const AppKey contextKey = "app"
 
 // AppAuthMiddleware handles app-level authentication
 type AppAuthMiddleware struct {
-	appRepo    *storage.AppRepository
-	secretRepo *storage.AppSecretRepository
+	appRepo    appRepo
+	secretRepo appSecretRepo
+}
+
+type appRepo interface {
+	GetByID(ctx context.Context, id uuid.UUID) (*types.App, error)
+}
+
+type appSecretRepo interface {
+	GetBySecretPrefix(ctx context.Context, prefix string) ([]*types.AppSecret, error)
+	UpdateLastUsed(ctx context.Context, id uuid.UUID) error
 }
 
 // NewAppAuthMiddleware creates a new app-level authentication middleware
@@ -38,7 +46,9 @@ func NewAppAuthMiddleware(store *storage.Store) *AppAuthMiddleware {
 }
 
 // Authenticate validates app-level credentials from database
-// Requires: Authorization: Basic <base64(app_id:app_secret)> AND X-App-Id: <app_id>
+// Requires:
+// - X-App-Id: <app_id>
+// - X-App-Secret: <app_secret>
 func (m *AppAuthMiddleware) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Check X-App-Id header
@@ -65,63 +75,25 @@ func (m *AppAuthMiddleware) Authenticate(next http.Handler) http.Handler {
 			return
 		}
 
-		// Check Authorization header (Basic Auth)
+		// App auth is header-based to avoid collisions with user auth (Authorization: Bearer).
+		// We intentionally do not accept Authorization: Basic.
 		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
+		if strings.HasPrefix(authHeader, "Basic ") {
 			m.writeError(w, apperrors.NewWithDetail(
 				apperrors.ErrCodeUnauthorized,
-				"Missing Authorization header",
-				"",
+				"Authorization: Basic is not supported",
+				"Use X-App-Secret",
 				http.StatusUnauthorized,
 			))
 			return
 		}
 
-		// Parse Basic Auth
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || parts[0] != "Basic" {
+		appSecret := r.Header.Get("X-App-Secret")
+		if appSecret == "" {
 			m.writeError(w, apperrors.NewWithDetail(
 				apperrors.ErrCodeUnauthorized,
-				"Invalid Authorization header format",
-				"Expected 'Basic <credentials>'",
-				http.StatusUnauthorized,
-			))
-			return
-		}
-
-		// Decode base64 credentials
-		decoded, err := base64.StdEncoding.DecodeString(parts[1])
-		if err != nil {
-			m.writeError(w, apperrors.NewWithDetail(
-				apperrors.ErrCodeUnauthorized,
-				"Invalid base64 encoding",
-				"",
-				http.StatusUnauthorized,
-			))
-			return
-		}
-
-		// Split into app_id:app_secret
-		credentials := strings.SplitN(string(decoded), ":", 2)
-		if len(credentials) != 2 {
-			m.writeError(w, apperrors.NewWithDetail(
-				apperrors.ErrCodeUnauthorized,
-				"Invalid credentials format",
-				"Expected 'app_id:app_secret'",
-				http.StatusUnauthorized,
-			))
-			return
-		}
-
-		appIDFromCreds := credentials[0]
-		appSecret := credentials[1]
-
-		// Verify app ID in credentials matches header
-		if appIDFromCreds != appIDHeader {
-			m.writeError(w, apperrors.NewWithDetail(
-				apperrors.ErrCodeUnauthorized,
-				"App ID mismatch",
-				"App ID in credentials must match X-App-Id header",
+				"Missing app credentials",
+				"Provide X-App-Secret",
 				http.StatusUnauthorized,
 			))
 			return

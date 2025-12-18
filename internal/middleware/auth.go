@@ -72,15 +72,30 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 			return
 		}
 
-		// Extract token from Authorization header
-		authHeader := r.Header.Get("Authorization")
+		// Reject deprecated/unsupported user auth headers to avoid ambiguity.
+		// User JWT must be provided via Authorization: Bearer <jwt>.
+		if r.Header.Get("X-User-Authorization") != "" || r.Header.Get("X-User-JWT") != "" {
+			m.writeError(w, apperrors.NewWithDetail(
+				apperrors.ErrCodeBadRequest,
+				"Unsupported user auth headers",
+				"Use Authorization: Bearer <jwt>",
+				http.StatusBadRequest,
+			))
+			return
+		}
 
-		// Check for Bearer token - if no Bearer token present, this is an app-only request
-		// App authentication was already done by AppAuthMiddleware
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || parts[0] != "Bearer" {
-			// No Bearer token - pass through for app-managed operations
-			// The handler should check for user_sub to determine if user context is required
+		// Extract token from Authorization header (Bearer).
+		var tokenString string
+		authHeader := r.Header.Get("Authorization")
+		if parts := strings.SplitN(authHeader, " ", 2); len(parts) == 2 && parts[0] == "Bearer" {
+			tokenString = parts[1]
+		}
+
+		// If no Bearer token present, this is an app-only request. App authentication was already
+		// done by AppAuthMiddleware.
+		if tokenString == "" {
+			// No user context - pass through for app-managed operations.
+			// The handler should check for user_sub to determine if user context is required.
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -96,8 +111,6 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 			))
 			return
 		}
-
-		tokenString := parts[1]
 
 		// Parse and validate the token
 		token, err := m.parseToken(tokenString, authSettings)

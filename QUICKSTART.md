@@ -89,6 +89,8 @@ For testing, you can use a service like https://jwt.io or your auth provider's d
 
 ```bash
 curl -X POST http://localhost:8080/v1/wallets \
+  -H "X-App-Id: YOUR_APP_ID" \
+  -H "X-App-Secret: YOUR_APP_SECRET" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -111,6 +113,8 @@ Response:
 
 ```bash
 curl http://localhost:8080/v1/wallets \
+  -H "X-App-Id: YOUR_APP_ID" \
+  -H "X-App-Secret: YOUR_APP_SECRET" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
 
@@ -118,6 +122,8 @@ curl http://localhost:8080/v1/wallets \
 
 ```bash
 curl -X POST http://localhost:8080/v1/wallets/WALLET_ID/sign \
+  -H "X-App-Id: YOUR_APP_ID" \
+  -H "X-App-Secret: YOUR_APP_SECRET" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{

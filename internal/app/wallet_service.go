@@ -1301,9 +1301,52 @@ func (s *WalletService) GetOwner(ctx context.Context, ownerID uuid.UUID) (*auth.
 		}, nil
 	}
 
-	// TODO: Check if it's a key quorum
-	// For now, return error
-	return nil, fmt.Errorf("owner not found")
+	// Try to get as key quorum
+	quorumRepo := storage.NewKeyQuorumRepository(s.store)
+	quorum, err := quorumRepo.GetByID(ctx, ownerID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get owner: %w", err)
+	}
+	if quorum == nil {
+		return nil, fmt.Errorf("owner not found")
+	}
+
+	if quorum.Status != types.StatusActive {
+		return nil, fmt.Errorf("key quorum is not active")
+	}
+	if quorum.Threshold <= 0 || quorum.Threshold > len(quorum.KeyIDs) {
+		return nil, fmt.Errorf("key quorum has invalid threshold")
+	}
+
+	keys := make([]auth.KeyQuorumKey, 0, len(quorum.KeyIDs))
+	for _, keyID := range quorum.KeyIDs {
+		memberKey, err := s.authKeyRepo.GetByID(ctx, keyID)
+		if err != nil || memberKey == nil {
+			return nil, fmt.Errorf("key quorum member %s not found", keyID)
+		}
+		if memberKey.Status != types.StatusActive {
+			return nil, fmt.Errorf("key quorum member %s is not active", keyID)
+		}
+		if memberKey.Algorithm != types.AlgorithmP256 {
+			return nil, fmt.Errorf("key quorum member %s has unsupported algorithm: %s", keyID, memberKey.Algorithm)
+		}
+
+		publicKeyPEM, err := auth.PublicKeyToPEM(memberKey.PublicKey)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert quorum member public key: %w", err)
+		}
+
+		keys = append(keys, auth.KeyQuorumKey{
+			ID:        memberKey.ID,
+			PublicKey: publicKeyPEM,
+		})
+	}
+
+	return &auth.Owner{
+		Type:            auth.OwnerTypeKeyQuorum,
+		QuorumKeys:      keys,
+		QuorumThreshold: quorum.Threshold,
+	}, nil
 }
 
 // ExportWalletRequest represents a request to export a wallet's private key

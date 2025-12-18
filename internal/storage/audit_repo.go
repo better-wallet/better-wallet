@@ -19,12 +19,20 @@ func NewAuditRepository(store *Store) *AuditRepository {
 
 // Create creates a new audit log entry
 func (r *AuditRepository) Create(ctx context.Context, log *types.AuditLog) error {
+	if log.AppID == nil {
+		appID, err := RequireAppID(ctx)
+		if err != nil {
+			return err
+		}
+		log.AppID = &appID
+	}
+
 	query := `
 		INSERT INTO audit_logs (
 			actor, action, resource_type, resource_id, policy_result,
-			signer_id, tx_hash, request_digest, client_ip, user_agent
+			signer_id, tx_hash, request_digest, client_ip, user_agent, app_id
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		RETURNING id, created_at
 	`
 
@@ -39,6 +47,7 @@ func (r *AuditRepository) Create(ctx context.Context, log *types.AuditLog) error
 		log.RequestDigest,
 		log.ClientIP,
 		log.UserAgent,
+		log.AppID,
 	).Scan(&log.ID, &log.CreatedAt)
 
 	if err != nil {
@@ -60,15 +69,21 @@ type QueryOptions struct {
 
 // Query retrieves audit logs with filtering and pagination
 func (r *AuditRepository) Query(ctx context.Context, opts QueryOptions) ([]*types.AuditLog, error) {
+	appID, err := RequireAppID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT id, actor, action, resource_type, resource_id, policy_result,
-		       signer_id, tx_hash, request_digest, client_ip, user_agent, created_at
+		       signer_id, tx_hash, request_digest, client_ip, user_agent, app_id, created_at
 		FROM audit_logs
-		WHERE 1=1
+		WHERE app_id = $1
 	`
 
-	args := make([]interface{}, 0)
-	argCount := 1
+	args := make([]interface{}, 0, 8)
+	args = append(args, appID)
+	argCount := 2
 
 	if opts.Actor != nil {
 		query += fmt.Sprintf(" AND actor = $%d", argCount)
@@ -128,6 +143,7 @@ func (r *AuditRepository) Query(ctx context.Context, opts QueryOptions) ([]*type
 			&log.RequestDigest,
 			&log.ClientIP,
 			&log.UserAgent,
+			&log.AppID,
 			&log.CreatedAt,
 		)
 		if err != nil {
@@ -141,15 +157,20 @@ func (r *AuditRepository) Query(ctx context.Context, opts QueryOptions) ([]*type
 
 // GetByID retrieves a single audit log by ID
 func (r *AuditRepository) GetByID(ctx context.Context, id int64) (*types.AuditLog, error) {
+	appID, err := RequireAppID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT id, actor, action, resource_type, resource_id, policy_result,
-		       signer_id, tx_hash, request_digest, client_ip, user_agent, created_at
+		       signer_id, tx_hash, request_digest, client_ip, user_agent, app_id, created_at
 		FROM audit_logs
-		WHERE id = $1
+		WHERE id = $1 AND app_id = $2
 	`
 
 	var log types.AuditLog
-	err := r.store.pool.QueryRow(ctx, query, id).Scan(
+	err = r.store.pool.QueryRow(ctx, query, id, appID).Scan(
 		&log.ID,
 		&log.Actor,
 		&log.Action,
@@ -161,6 +182,7 @@ func (r *AuditRepository) GetByID(ctx context.Context, id int64) (*types.AuditLo
 		&log.RequestDigest,
 		&log.ClientIP,
 		&log.UserAgent,
+		&log.AppID,
 		&log.CreatedAt,
 	)
 	if err != nil {
@@ -175,16 +197,22 @@ func (r *AuditRepository) GetByID(ctx context.Context, id int64) (*types.AuditLo
 
 // CountBySessionSigner counts the number of transactions signed by a specific session signer
 func (r *AuditRepository) CountBySessionSigner(ctx context.Context, signerID string) (int, error) {
+	appID, err := RequireAppID(ctx)
+	if err != nil {
+		return 0, err
+	}
+
 	query := `
 		SELECT COUNT(*)
 		FROM audit_logs
 		WHERE signer_id = $1
+		  AND app_id = $2
 		  AND action = 'wallet.sign_transaction'
 		  AND policy_result = 'allow'
 	`
 
 	var count int
-	err := r.store.pool.QueryRow(ctx, query, signerID).Scan(&count)
+	err = r.store.pool.QueryRow(ctx, query, signerID, appID).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("failed to count session signer transactions: %w", err)
 	}

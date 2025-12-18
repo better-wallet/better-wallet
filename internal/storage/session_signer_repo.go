@@ -22,6 +22,14 @@ func NewSessionSignerRepository(store *Store) *SessionSignerRepository {
 
 // CreateTx inserts a session signer using provided transaction/connection
 func (r *SessionSignerRepository) CreateTx(ctx context.Context, db DBTX, ss *types.SessionSigner) error {
+	if ss.AppID == nil {
+		appID, err := RequireAppID(ctx)
+		if err != nil {
+			return err
+		}
+		ss.AppID = &appID
+	}
+
 	query := `
 		INSERT INTO session_signers (
 			id, wallet_id, signer_id, policy_override_id, allowed_methods,
@@ -46,15 +54,21 @@ func (r *SessionSignerRepository) CreateTx(ctx context.Context, db DBTX, ss *typ
 
 // GetActiveByWallet retrieves active (non-revoked, unexpired) session signers for a wallet
 func (r *SessionSignerRepository) GetActiveByWallet(ctx context.Context, walletID uuid.UUID, now time.Time) ([]*types.SessionSigner, error) {
+	appID, err := RequireAppID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	query := `
         SELECT id, wallet_id, signer_id, policy_override_id, allowed_methods, max_value, max_txs, ttl_expires_at, app_id, created_at, revoked_at
         FROM session_signers
         WHERE wallet_id = $1
           AND (revoked_at IS NULL)
           AND ttl_expires_at > $2
+		  AND app_id = $3
     `
 
-	rows, err := r.store.pool.Query(ctx, query, walletID, now)
+	rows, err := r.store.pool.Query(ctx, query, walletID, now, appID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query session signers: %w", err)
 	}
@@ -90,14 +104,19 @@ func (r *SessionSignerRepository) GetActiveByWallet(ctx context.Context, walletI
 
 // GetByID retrieves a session signer by ID
 func (r *SessionSignerRepository) GetByID(ctx context.Context, id uuid.UUID) (*types.SessionSigner, error) {
+	appID, err := RequireAppID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	query := `
         SELECT id, wallet_id, signer_id, policy_override_id, allowed_methods, max_value, max_txs, ttl_expires_at, app_id, created_at, revoked_at
         FROM session_signers
-        WHERE id = $1
+        WHERE id = $1 AND app_id = $2
     `
 
 	ss := &types.SessionSigner{}
-	err := r.store.pool.QueryRow(ctx, query, id).Scan(
+	err = r.store.pool.QueryRow(ctx, query, id, appID).Scan(
 		&ss.ID,
 		&ss.WalletID,
 		&ss.SignerID,
@@ -156,13 +175,18 @@ func (r *SessionSignerRepository) GetByIDAndAppID(ctx context.Context, id, appID
 
 // ListByWallet returns all session signers (including expired/revoked) for a wallet
 func (r *SessionSignerRepository) ListByWallet(ctx context.Context, walletID uuid.UUID) ([]*types.SessionSigner, error) {
+	appID, err := RequireAppID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT id, wallet_id, signer_id, policy_override_id, allowed_methods, max_value, max_txs, ttl_expires_at, app_id, created_at, revoked_at
 		FROM session_signers
-		WHERE wallet_id = $1
+		WHERE wallet_id = $1 AND app_id = $2
 		ORDER BY created_at DESC
 	`
-	rows, err := r.store.pool.Query(ctx, query, walletID)
+	rows, err := r.store.pool.Query(ctx, query, walletID, appID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list session signers: %w", err)
 	}
@@ -236,12 +260,17 @@ func (r *SessionSignerRepository) ListByAppID(ctx context.Context, appID uuid.UU
 
 // Revoke sets revoked_at for a session signer
 func (r *SessionSignerRepository) Revoke(ctx context.Context, id uuid.UUID) error {
+	appID, err := RequireAppID(ctx)
+	if err != nil {
+		return err
+	}
+
 	query := `
 		UPDATE session_signers
 		SET revoked_at = NOW()
-		WHERE id = $1 AND revoked_at IS NULL
+		WHERE id = $1 AND revoked_at IS NULL AND app_id = $2
 	`
-	cmd, err := r.store.pool.Exec(ctx, query, id)
+	cmd, err := r.store.pool.Exec(ctx, query, id, appID)
 	if err != nil {
 		return fmt.Errorf("failed to revoke session signer: %w", err)
 	}

@@ -135,15 +135,26 @@ func (s *Server) handleListKeyQuorums(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	appID, err := storage.RequireAppID(r.Context())
+	if err != nil {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeUnauthorized,
+			"Missing app context",
+			err.Error(),
+			http.StatusUnauthorized,
+		))
+		return
+	}
+
 	// Get all key quorums
 	query := `
 		SELECT id, threshold, key_ids, status, created_at
 		FROM key_quorums
-		WHERE status = 'active'
+		WHERE status = 'active' AND app_id = $1
 		ORDER BY created_at DESC
 	`
 
-	rows, err := s.store.DB().Query(r.Context(), query)
+	rows, err := s.store.DB().Query(r.Context(), query, appID)
 	if err != nil {
 		s.writeError(w, apperrors.NewWithDetail(
 			apperrors.ErrCodeInternalError,

@@ -2,7 +2,6 @@ package middleware
 
 import (
 	"context"
-	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -99,7 +98,7 @@ func TestAppAuthMiddleware_MissingHeaders(t *testing.T) {
 		assert.Contains(t, recorder.Body.String(), "Invalid app ID")
 	})
 
-	t.Run("returns error when Authorization header is missing", func(t *testing.T) {
+	t.Run("returns error when X-App-Secret header is missing", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/test", nil)
 		req.Header.Set("X-App-Id", "123e4567-e89b-12d3-a456-426614174000")
 		recorder := httptest.NewRecorder()
@@ -107,11 +106,11 @@ func TestAppAuthMiddleware_MissingHeaders(t *testing.T) {
 		middleware.Authenticate(handler).ServeHTTP(recorder, req)
 
 		assert.Equal(t, http.StatusUnauthorized, recorder.Code)
-		assert.Contains(t, recorder.Body.String(), "Authorization")
+		assert.Contains(t, recorder.Body.String(), "X-App-Secret")
 	})
 }
 
-func TestAppAuthMiddleware_InvalidAuthorizationHeader(t *testing.T) {
+func TestAppAuthMiddleware_RequiresXAppSecret(t *testing.T) {
 	middleware := &AppAuthMiddleware{
 		appRepo:    nil,
 		secretRepo: nil,
@@ -121,7 +120,7 @@ func TestAppAuthMiddleware_InvalidAuthorizationHeader(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	t.Run("returns error for non-Basic auth", func(t *testing.T) {
+	t.Run("returns error when Authorization is Bearer but X-App-Secret is missing", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/test", nil)
 		req.Header.Set("X-App-Id", "123e4567-e89b-12d3-a456-426614174000")
 		req.Header.Set("Authorization", "Bearer token123")
@@ -130,60 +129,19 @@ func TestAppAuthMiddleware_InvalidAuthorizationHeader(t *testing.T) {
 		middleware.Authenticate(handler).ServeHTTP(recorder, req)
 
 		assert.Equal(t, http.StatusUnauthorized, recorder.Code)
-		assert.Contains(t, recorder.Body.String(), "Invalid Authorization header format")
+		assert.Contains(t, recorder.Body.String(), "X-App-Secret")
 	})
 
-	t.Run("returns error for malformed Basic auth", func(t *testing.T) {
+	t.Run("returns error for Authorization: Basic", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/test", nil)
 		req.Header.Set("X-App-Id", "123e4567-e89b-12d3-a456-426614174000")
-		req.Header.Set("Authorization", "Basic")
+		req.Header.Set("Authorization", "Basic sometoken")
 		recorder := httptest.NewRecorder()
 
 		middleware.Authenticate(handler).ServeHTTP(recorder, req)
 
 		assert.Equal(t, http.StatusUnauthorized, recorder.Code)
-	})
-
-	t.Run("returns error for invalid base64 encoding", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		req.Header.Set("X-App-Id", "123e4567-e89b-12d3-a456-426614174000")
-		req.Header.Set("Authorization", "Basic not-valid-base64!!!")
-		recorder := httptest.NewRecorder()
-
-		middleware.Authenticate(handler).ServeHTTP(recorder, req)
-
-		assert.Equal(t, http.StatusUnauthorized, recorder.Code)
-		assert.Contains(t, recorder.Body.String(), "Invalid base64")
-	})
-
-	t.Run("returns error for missing colon in credentials", func(t *testing.T) {
-		// Base64 encode "no-colon"
-		encoded := base64.StdEncoding.EncodeToString([]byte("no-colon"))
-
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		req.Header.Set("X-App-Id", "123e4567-e89b-12d3-a456-426614174000")
-		req.Header.Set("Authorization", "Basic "+encoded)
-		recorder := httptest.NewRecorder()
-
-		middleware.Authenticate(handler).ServeHTTP(recorder, req)
-
-		assert.Equal(t, http.StatusUnauthorized, recorder.Code)
-		assert.Contains(t, recorder.Body.String(), "Invalid credentials")
-	})
-
-	t.Run("returns error when app ID in credentials doesn't match header", func(t *testing.T) {
-		// Base64 encode "different-app-id:secret"
-		encoded := base64.StdEncoding.EncodeToString([]byte("different-app-id:secret"))
-
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		req.Header.Set("X-App-Id", "123e4567-e89b-12d3-a456-426614174000")
-		req.Header.Set("Authorization", "Basic "+encoded)
-		recorder := httptest.NewRecorder()
-
-		middleware.Authenticate(handler).ServeHTTP(recorder, req)
-
-		assert.Equal(t, http.StatusUnauthorized, recorder.Code)
-		assert.Contains(t, recorder.Body.String(), "mismatch")
+		assert.Contains(t, recorder.Body.String(), "Basic is not supported")
 	})
 }
 

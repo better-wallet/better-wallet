@@ -106,7 +106,7 @@ All API endpoints (except `/health`) require **App authentication**:
 
 ```
 X-App-Id: <app_id>
-Authorization: Basic base64(<app_id>:<app_secret>)
+X-App-Secret: <app_secret>
 ```
 
 Many endpoints that operate on **user-owned** resources also require a user JWT:

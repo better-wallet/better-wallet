@@ -22,6 +22,14 @@ func NewConditionSetRepository(store *Store) *ConditionSetRepository {
 
 // Create creates a new condition set
 func (r *ConditionSetRepository) Create(ctx context.Context, cs *types.ConditionSet) error {
+	if cs.AppID == nil {
+		appID, err := RequireAppID(ctx)
+		if err != nil {
+			return err
+		}
+		cs.AppID = &appID
+	}
+
 	valuesJSON, err := json.Marshal(cs.Values)
 	if err != nil {
 		return fmt.Errorf("failed to marshal values: %w", err)
@@ -51,17 +59,22 @@ func (r *ConditionSetRepository) Create(ctx context.Context, cs *types.Condition
 
 // GetByID retrieves a condition set by ID
 func (r *ConditionSetRepository) GetByID(ctx context.Context, id uuid.UUID) (*types.ConditionSet, error) {
+	appID, err := RequireAppID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT id, name, description, values, owner_id, app_id, created_at, updated_at
 		FROM condition_sets
-		WHERE id = $1
+		WHERE id = $1 AND app_id = $2
 	`
 
 	var cs types.ConditionSet
 	var valuesJSON []byte
 	var description *string
 
-	err := r.store.pool.QueryRow(ctx, query, id).Scan(
+	err = r.store.pool.QueryRow(ctx, query, id, appID).Scan(
 		&cs.ID,
 		&cs.Name,
 		&description,
@@ -135,14 +148,19 @@ func (r *ConditionSetRepository) GetByOwnerIDs(ctx context.Context, ownerIDs []u
 		return []*types.ConditionSet{}, nil
 	}
 
+	appID, err := RequireAppID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	query := `
 		SELECT id, name, description, values, owner_id, app_id, created_at, updated_at
 		FROM condition_sets
-		WHERE owner_id = ANY($1)
+		WHERE owner_id = ANY($1) AND app_id = $2
 		ORDER BY created_at DESC
 	`
 
-	rows, err := r.store.pool.Query(ctx, query, ownerIDs)
+	rows, err := r.store.pool.Query(ctx, query, ownerIDs, appID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get condition sets by owner IDs: %w", err)
 	}
@@ -233,6 +251,11 @@ func (r *ConditionSetRepository) GetByAppID(ctx context.Context, appID uuid.UUID
 
 // Update updates a condition set
 func (r *ConditionSetRepository) Update(ctx context.Context, cs *types.ConditionSet) error {
+	appID, err := RequireAppID(ctx)
+	if err != nil {
+		return err
+	}
+
 	valuesJSON, err := json.Marshal(cs.Values)
 	if err != nil {
 		return fmt.Errorf("failed to marshal values: %w", err)
@@ -241,7 +264,7 @@ func (r *ConditionSetRepository) Update(ctx context.Context, cs *types.Condition
 	query := `
 		UPDATE condition_sets
 		SET name = $1, description = $2, values = $3, updated_at = NOW()
-		WHERE id = $4
+		WHERE id = $4 AND app_id = $5
 		RETURNING updated_at
 	`
 
@@ -250,6 +273,7 @@ func (r *ConditionSetRepository) Update(ctx context.Context, cs *types.Condition
 		cs.Description,
 		valuesJSON,
 		cs.ID,
+		appID,
 	).Scan(&cs.UpdatedAt)
 
 	if err == pgx.ErrNoRows {
@@ -264,9 +288,14 @@ func (r *ConditionSetRepository) Update(ctx context.Context, cs *types.Condition
 
 // Delete deletes a condition set by ID
 func (r *ConditionSetRepository) Delete(ctx context.Context, id uuid.UUID) error {
-	query := `DELETE FROM condition_sets WHERE id = $1`
+	appID, err := RequireAppID(ctx)
+	if err != nil {
+		return err
+	}
 
-	result, err := r.store.pool.Exec(ctx, query, id)
+	query := `DELETE FROM condition_sets WHERE id = $1 AND app_id = $2`
+
+	result, err := r.store.pool.Exec(ctx, query, id, appID)
 	if err != nil {
 		return fmt.Errorf("failed to delete condition set: %w", err)
 	}

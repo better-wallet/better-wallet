@@ -184,6 +184,17 @@ func (s *Server) handleListPolicies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	appID, err := storage.RequireAppID(r.Context())
+	if err != nil {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeUnauthorized,
+			"Missing app context",
+			err.Error(),
+			http.StatusUnauthorized,
+		))
+		return
+	}
+
 	// Get user's authorization keys
 	authKeyRepo := storage.NewAuthorizationKeyRepository(s.store)
 	userKeys, err := authKeyRepo.GetActiveByOwnerEntity(r.Context(), userSub)
@@ -216,11 +227,11 @@ func (s *Server) handleListPolicies(w http.ResponseWriter, r *http.Request) {
 	query := `
 		SELECT id, name, chain_type, version, rules, owner_id, created_at
 		FROM policies
-		WHERE owner_id = ANY($1)
+		WHERE owner_id = ANY($1) AND app_id = $2
 		ORDER BY created_at DESC
 	`
 
-	rows, err := s.store.DB().Query(r.Context(), query, keyIDs)
+	rows, err := s.store.DB().Query(r.Context(), query, keyIDs, appID)
 	if err != nil {
 		s.writeError(w, apperrors.NewWithDetail(
 			apperrors.ErrCodeInternalError,
@@ -529,9 +540,19 @@ func (s *Server) handleUpdatePolicy(w http.ResponseWriter, r *http.Request, poli
 	query := `
 		UPDATE policies
 		SET name = $1, rules = $2
-		WHERE id = $3
+		WHERE id = $3 AND app_id = $4
 	`
-	_, err = s.store.DB().Exec(r.Context(), query, policy.Name, rulesJSON, policyID)
+	appID, appErr := storage.RequireAppID(r.Context())
+	if appErr != nil {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeUnauthorized,
+			"Missing app context",
+			appErr.Error(),
+			http.StatusUnauthorized,
+		))
+		return
+	}
+	_, err = s.store.DB().Exec(r.Context(), query, policy.Name, rulesJSON, policyID, appID)
 	if err != nil {
 		s.writeError(w, apperrors.NewWithDetail(
 			apperrors.ErrCodeInternalError,
@@ -551,6 +572,17 @@ func (s *Server) handleDeletePolicy(w http.ResponseWriter, r *http.Request, poli
 	userSub, ok := getUserSub(r.Context())
 	if !ok {
 		s.writeError(w, apperrors.ErrUnauthorized)
+		return
+	}
+
+	appID, err := storage.RequireAppID(r.Context())
+	if err != nil {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeUnauthorized,
+			"Missing app context",
+			err.Error(),
+			http.StatusUnauthorized,
+		))
 		return
 	}
 
@@ -583,8 +615,8 @@ func (s *Server) handleDeletePolicy(w http.ResponseWriter, r *http.Request, poli
 	}
 
 	// Delete policy
-	query := `DELETE FROM policies WHERE id = $1`
-	_, err = s.store.DB().Exec(r.Context(), query, policyID)
+	query := `DELETE FROM policies WHERE id = $1 AND app_id = $2`
+	_, err = s.store.DB().Exec(r.Context(), query, policyID, appID)
 	if err != nil {
 		s.writeError(w, apperrors.NewWithDetail(
 			apperrors.ErrCodeInternalError,

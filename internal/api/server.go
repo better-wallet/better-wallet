@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/better-wallet/better-wallet/internal/app"
 	"github.com/better-wallet/better-wallet/internal/config"
 	"github.com/better-wallet/better-wallet/internal/middleware"
 	"github.com/better-wallet/better-wallet/internal/storage"
@@ -16,7 +15,7 @@ import (
 // Server represents the HTTP server
 type Server struct {
 	config                *config.Config
-	walletService         *app.WalletService
+	walletService         WalletService
 	appAuthMiddleware     *middleware.AppAuthMiddleware
 	userAuthMiddleware    *middleware.AuthMiddleware
 	idempotencyMiddleware *middleware.IdempotencyMiddleware
@@ -27,7 +26,7 @@ type Server struct {
 // NewServer creates a new API server
 func NewServer(
 	cfg *config.Config,
-	walletService *app.WalletService,
+	walletService WalletService,
 	appAuthMiddleware *middleware.AppAuthMiddleware,
 	userAuthMiddleware *middleware.AuthMiddleware,
 	idempotencyMiddleware *middleware.IdempotencyMiddleware,
@@ -45,86 +44,59 @@ func NewServer(
 
 // Start starts the HTTP server
 func (s *Server) Start() error {
-	mux := http.NewServeMux()
+	rootMux := http.NewServeMux()
 
 	// Health check endpoint (no auth required)
-	mux.HandleFunc("/health", s.handleHealth)
+	rootMux.HandleFunc("/health", s.handleHealth)
 
-	// API v1 routes
-	mux.Handle("/v1/wallets",
-		s.appAuthMiddleware.Authenticate(
-			s.userAuthMiddleware.Authenticate(http.HandlerFunc(s.handleWallets))))
+	// API v1 routes (auth must run BEFORE idempotency to prevent replay bypass).
+	v1Mux := http.NewServeMux()
+	v1Mux.Handle("/v1/wallets", http.HandlerFunc(s.handleWallets))
 
 	// Wallet operations - routing to appropriate handler
-	mux.Handle("/v1/wallets/",
-		s.appAuthMiddleware.Authenticate(
-			s.userAuthMiddleware.Authenticate(
-				http.HandlerFunc(s.handleWalletOperationsRouter))))
+	v1Mux.Handle("/v1/wallets/", http.HandlerFunc(s.handleWalletOperationsRouter))
 
 	// Policy management routes
-	mux.Handle("/v1/policies",
-		s.appAuthMiddleware.Authenticate(
-			s.userAuthMiddleware.Authenticate(http.HandlerFunc(s.handlePolicies))))
+	v1Mux.Handle("/v1/policies", http.HandlerFunc(s.handlePolicies))
 
-	mux.Handle("/v1/policies/",
-		s.appAuthMiddleware.Authenticate(
-			s.userAuthMiddleware.Authenticate(
-				http.HandlerFunc(s.handlePolicyOperations))))
+	v1Mux.Handle("/v1/policies/", http.HandlerFunc(s.handlePolicyOperations))
 
 	// Key quorum management routes
-	mux.Handle("/v1/key-quorums",
-		s.appAuthMiddleware.Authenticate(
-			s.userAuthMiddleware.Authenticate(http.HandlerFunc(s.handleKeyQuorums))))
+	v1Mux.Handle("/v1/key-quorums", http.HandlerFunc(s.handleKeyQuorums))
 
-	mux.Handle("/v1/key-quorums/",
-		s.appAuthMiddleware.Authenticate(
-			s.userAuthMiddleware.Authenticate(
-				http.HandlerFunc(s.handleKeyQuorumOperations))))
+	v1Mux.Handle("/v1/key-quorums/", http.HandlerFunc(s.handleKeyQuorumOperations))
 
 	// User management routes
-	mux.Handle("/v1/users",
-		s.appAuthMiddleware.Authenticate(
-			s.userAuthMiddleware.Authenticate(http.HandlerFunc(s.handleUsers))))
+	v1Mux.Handle("/v1/users", http.HandlerFunc(s.handleUsers))
 
-	mux.Handle("/v1/users/",
-		s.appAuthMiddleware.Authenticate(
-			s.userAuthMiddleware.Authenticate(
-				http.HandlerFunc(s.handleUserOperations))))
+	v1Mux.Handle("/v1/users/", http.HandlerFunc(s.handleUserOperations))
 
 	// Transaction query routes
-	mux.Handle("/v1/transactions",
-		s.appAuthMiddleware.Authenticate(
-			s.userAuthMiddleware.Authenticate(http.HandlerFunc(s.handleTransactions))))
+	v1Mux.Handle("/v1/transactions", http.HandlerFunc(s.handleTransactions))
 
-	mux.Handle("/v1/transactions/",
-		s.appAuthMiddleware.Authenticate(
-			s.userAuthMiddleware.Authenticate(
-				http.HandlerFunc(s.handleTransactionOperations))))
+	v1Mux.Handle("/v1/transactions/", http.HandlerFunc(s.handleTransactionOperations))
 
 	// Authorization key management routes
-	mux.Handle("/v1/authorization-keys",
-		s.appAuthMiddleware.Authenticate(
-			s.userAuthMiddleware.Authenticate(http.HandlerFunc(s.handleAuthorizationKeys))))
+	v1Mux.Handle("/v1/authorization-keys", http.HandlerFunc(s.handleAuthorizationKeys))
 
-	mux.Handle("/v1/authorization-keys/",
-		s.appAuthMiddleware.Authenticate(
-			s.userAuthMiddleware.Authenticate(
-				http.HandlerFunc(s.handleAuthorizationKeyOperations))))
+	v1Mux.Handle("/v1/authorization-keys/", http.HandlerFunc(s.handleAuthorizationKeyOperations))
 
 	// Condition set management routes
-	mux.Handle("/v1/condition_sets",
-		s.appAuthMiddleware.Authenticate(
-			s.userAuthMiddleware.Authenticate(http.HandlerFunc(s.handleConditionSets))))
+	v1Mux.Handle("/v1/condition_sets", http.HandlerFunc(s.handleConditionSets))
 
-	mux.Handle("/v1/condition_sets/",
-		s.appAuthMiddleware.Authenticate(
-			s.userAuthMiddleware.Authenticate(
-				http.HandlerFunc(s.handleConditionSetOperations))))
+	v1Mux.Handle("/v1/condition_sets/", http.HandlerFunc(s.handleConditionSetOperations))
+
+	v1Handler := s.appAuthMiddleware.Authenticate(
+		s.userAuthMiddleware.Authenticate(
+			s.idempotencyMiddleware.Handle(v1Mux),
+		),
+	)
+	rootMux.Handle("/v1/", v1Handler)
 
 	s.httpServer = &http.Server{
 		Addr: fmt.Sprintf(":%d", s.config.Port),
-		// Chain middleware: AuditContext -> Logging -> Idempotency -> Routes
-		Handler:      middleware.AuditContext(s.loggingMiddleware(s.idempotencyMiddleware.Handle(mux))),
+		// Chain middleware: AuditContext -> Logging -> Routes
+		Handler:      middleware.AuditContext(s.loggingMiddleware(rootMux)),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
