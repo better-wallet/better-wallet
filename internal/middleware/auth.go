@@ -167,6 +167,11 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 
 		// Add subject to context
 		ctx := context.WithValue(r.Context(), UserSubKey, sub)
+
+		// Reduce risk of accidental leakage in downstream logs/telemetry.
+		// Handlers should rely on user_sub in context, not the raw token.
+		r.Header.Del("Authorization")
+
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

@@ -113,12 +113,7 @@ func MakeAuthenticatedRequest(
 	req := httptest.NewRequest(method, path, bodyReader)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-App-Id", app.ID.String())
-
-	// Basic auth for app
-	credentials := base64.StdEncoding.EncodeToString(
-		[]byte(fmt.Sprintf("%s:%s", app.ID.String(), app.Secret)),
-	)
-	req.Header.Set("Authorization", "Basic "+credentials)
+	req.Header.Set("X-App-Secret", app.Secret)
 
 	// User JWT (if provided)
 	if userJWT != "" {

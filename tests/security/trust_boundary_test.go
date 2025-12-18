@@ -7,6 +7,7 @@
 package security
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -21,6 +22,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // =============================================================================
@@ -67,10 +69,25 @@ func (env *testEnv) createAppCredentials(t *testing.T) (uuid.UUID, string) {
 	return app.ID, secret
 }
 
-// makeBasicAuth creates Basic auth header value.
-func makeBasicAuth(appID uuid.UUID, secret string) string {
-	credentials := fmt.Sprintf("%s:%s", appID.String(), secret)
-	return "Basic " + base64.StdEncoding.EncodeToString([]byte(credentials))
+func validateAppSecret(ctx context.Context, store *mocks.TestDataStore, appID uuid.UUID, secret string) bool {
+	if len(secret) < 14 {
+		return false
+	}
+	prefix := secret[:14]
+	secrets, err := store.AppSecrets.GetBySecretPrefix(ctx, prefix)
+	if err != nil {
+		return false
+	}
+
+	for _, s := range secrets {
+		if s == nil || s.AppID != appID {
+			continue
+		}
+		if bcrypt.CompareHashAndPassword([]byte(s.SecretHash), []byte(secret)) == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // =============================================================================
@@ -137,7 +154,7 @@ func TestTrustBoundary1_AppAuth(t *testing.T) {
 		nonexistentID := uuid.New()
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/wallets", nil)
 		req.Header.Set("X-App-Id", nonexistentID.String())
-		req.Header.Set("Authorization", makeBasicAuth(nonexistentID, "fake-secret"))
+		req.Header.Set("X-App-Secret", "bw_sk_fake_secret_value")
 		recorder := httptest.NewRecorder()
 
 		// Check if app exists
@@ -160,17 +177,10 @@ func TestTrustBoundary1_AppAuth(t *testing.T) {
 	t.Run("wrong_app_secret", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/wallets", nil)
 		req.Header.Set("X-App-Id", appID.String())
-		req.Header.Set("Authorization", makeBasicAuth(appID, "wrong-secret-value"))
+		req.Header.Set("X-App-Secret", "bw_sk_wrong_secret_value")
 		recorder := httptest.NewRecorder()
 
-		// Simulated secret validation that fails for wrong secret
-		// In real middleware, this would check against bcrypt hash
-		// Here we simulate that wrong secret always fails
-
-		// The secret "wrong-secret-value" doesn't match the real secret
-		isValidSecret := false // Always false for wrong secret
-
-		if !isValidSecret {
+		if !validateAppSecret(req.Context(), env.store, appID, req.Header.Get("X-App-Secret")) {
 			w := recorder
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
@@ -218,7 +228,7 @@ func TestTrustBoundary1_AppAuth(t *testing.T) {
 	t.Run("valid_app_credentials", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/wallets", nil)
 		req.Header.Set("X-App-Id", appID.String())
-		req.Header.Set("Authorization", makeBasicAuth(appID, appSecret))
+		req.Header.Set("X-App-Secret", appSecret)
 		recorder := httptest.NewRecorder()
 
 		// Verify all conditions for valid auth
@@ -229,6 +239,7 @@ func TestTrustBoundary1_AppAuth(t *testing.T) {
 		app, err := env.store.Apps.GetByID(req.Context(), parsedID)
 		require.NoError(t, err)
 		require.Equal(t, "active", app.Status)
+		require.True(t, validateAppSecret(req.Context(), env.store, parsedID, req.Header.Get("X-App-Secret")))
 
 		// Simulate successful auth
 		successHandler.ServeHTTP(recorder, req)
@@ -236,31 +247,30 @@ func TestTrustBoundary1_AppAuth(t *testing.T) {
 		assert.Equal(t, http.StatusOK, recorder.Code)
 	})
 
-	t.Run("app_id_mismatch_header_vs_credentials", func(t *testing.T) {
-		differentAppID := uuid.New()
+	t.Run("secret_does_not_belong_to_app_id", func(t *testing.T) {
+		otherAppID, otherSecret := env.createAppCredentials(t)
+
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/wallets", nil)
 		req.Header.Set("X-App-Id", appID.String())
-		req.Header.Set("Authorization", makeBasicAuth(differentAppID, appSecret))
+		req.Header.Set("X-App-Secret", otherSecret)
 		recorder := httptest.NewRecorder()
 
-		// Parse credentials and verify match
-		authHeader := req.Header.Get("Authorization")
-		parts := strings.SplitN(authHeader, " ", 2)
-		decoded, _ := base64.StdEncoding.DecodeString(parts[1])
-		credentials := strings.SplitN(string(decoded), ":", 2)
+		// App exists but secret is for a different app
+		_, err := env.store.Apps.GetByID(req.Context(), appID)
+		require.NoError(t, err)
+		require.True(t, validateAppSecret(req.Context(), env.store, otherAppID, otherSecret))
 
-		if credentials[0] != appID.String() {
+		if !validateAppSecret(req.Context(), env.store, appID, req.Header.Get("X-App-Secret")) {
 			w := recorder
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			json.NewEncoder(w).Encode(map[string]string{
 				"code":    "unauthorized",
-				"message": "App ID mismatch",
+				"message": "Invalid app credentials",
 			})
 		}
 
 		assert.Equal(t, http.StatusUnauthorized, recorder.Code)
-		assert.Contains(t, recorder.Body.String(), "mismatch")
 	})
 }
 

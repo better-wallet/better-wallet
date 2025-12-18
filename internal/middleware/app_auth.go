@@ -133,6 +133,9 @@ func (m *AppAuthMiddleware) Authenticate(next http.Handler) http.Handler {
 			return
 		}
 
+		// Reduce risk of accidental leakage in downstream logs/telemetry.
+		r.Header.Del("X-App-Secret")
+
 		// Credentials valid, store app info in context and proceed
 		// Set both middleware context keys (for backward compatibility) and storage context key (for automatic repo scoping)
 		ctx := context.WithValue(r.Context(), AppIDKey, appIDHeader)

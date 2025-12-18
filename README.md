@@ -109,6 +109,9 @@ X-App-Id: <app_id>
 X-App-Secret: <app_secret>
 ```
 
+Treat `X-App-Secret` as a long-lived credential and ensure it is never logged. The server strips
+`X-App-Secret` (and user `Authorization` tokens) from requests after authentication.
+
 Many endpoints that operate on **user-owned** resources also require a user JWT:
 
 ```

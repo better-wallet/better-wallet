@@ -86,6 +86,9 @@ func TestAppAuthMiddleware_AllowsXAppSecretWithBearerAuthHeader(t *testing.T) {
 		require.NotNil(t, GetApp(r.Context()))
 		require.Equal(t, appID.String(), GetAppID(r.Context()))
 
+		// Secret should not be available downstream
+		require.Empty(t, r.Header.Get("X-App-Secret"))
+
 		// Storage app scope is set (uuid)
 		gotAppID, err := storage.RequireAppID(r.Context())
 		require.NoError(t, err)
