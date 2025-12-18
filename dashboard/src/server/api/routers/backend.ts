@@ -90,7 +90,7 @@ function evaluateCondition(operator: string, actual: unknown, expected: unknown)
     case 'gte':
       return { matched: compareBigInt(actual, expected) >= 0 }
 
-    case 'in':
+    case 'in': {
       if (!Array.isArray(expected)) return { matched: false }
       const actualLower = typeof actual === 'string' ? actual.toLowerCase() : actual
       return {
@@ -99,8 +99,9 @@ function evaluateCondition(operator: string, actual: unknown, expected: unknown)
           return actualLower === vLower
         }),
       }
+    }
 
-    case 'in_condition_set':
+    case 'in_condition_set': {
       // For simplicity, treat expected as the condition set values array
       if (!Array.isArray(expected)) return { matched: false }
       const actualLower2 = typeof actual === 'string' ? actual.toLowerCase() : actual
@@ -110,6 +111,7 @@ function evaluateCondition(operator: string, actual: unknown, expected: unknown)
           return actualLower2 === vLower
         }),
       }
+    }
 
     default:
       return { matched: false }

@@ -12,7 +12,6 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useSession } from '@/lib/auth/client'
-import { trpc } from '@/lib/trpc/client'
 
 export default function SettingsPage() {
   const { data: session, isPending: sessionLoading } = useSession()

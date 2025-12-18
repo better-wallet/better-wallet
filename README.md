@@ -102,11 +102,53 @@ The server will start on `http://localhost:8080`.
 
 ### Authentication
 
-All API endpoints (except `/health`) require a Bearer token:
+All API endpoints (except `/health`) require **App authentication**:
+
+```
+X-App-Id: <app_id>
+Authorization: Basic base64(<app_id>:<app_secret>)
+```
+
+Many endpoints that operate on **user-owned** resources also require a user JWT:
 
 ```
 Authorization: Bearer <your-jwt-token>
 ```
+
+### Authorization Signatures (Canonical JSON)
+
+Certain privileged operations require an additional request signature:
+
+- `PATCH /v1/wallets/{wallet_id}`
+- `DELETE /v1/wallets/{wallet_id}`
+- `PATCH /v1/policies/{policy_id}`
+- `DELETE /v1/policies/{policy_id}`
+- `PATCH /v1/key-quorums/{key_quorum_id}`
+- `DELETE /v1/key-quorums/{key_quorum_id}`
+- `POST /v1/wallets/{wallet_id}/rpc`
+
+Header:
+
+```
+X-Authorization-Signature: <sig>[,<sig>...]
+```
+
+The signature is a base64-encoded P-256 ECDSA signature over an RFC 8785 canonical JSON payload:
+
+```json
+{
+  "version": "v1",
+  "method": "POST",
+  "url": "https://your-api.example.com/v1/wallets/<id>/rpc",
+  "body": "{...raw request body...}",
+  "headers": {
+    "x-app-id": "<app_id>",
+    "x-idempotency-key": "<optional>"
+  }
+}
+```
+
+Note: set `BETTER_WALLET_CANONICAL_URL_MODE=relative` to use `url` as path-only (legacy mode).
 
 ### Endpoints
 

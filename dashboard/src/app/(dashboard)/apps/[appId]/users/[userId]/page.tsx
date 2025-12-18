@@ -105,7 +105,7 @@ export default function UserDetailPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
-              <label className="text-sm font-medium text-muted-foreground">User ID</label>
+              <div className="text-sm font-medium text-muted-foreground">User ID</div>
               <div className="flex items-center gap-2 mt-1">
                 <code className="text-sm bg-muted px-2 py-1 rounded font-mono flex-1 break-all">
                   {user.id}
@@ -122,7 +122,7 @@ export default function UserDetailPage() {
             </div>
 
             <div>
-              <label className="text-sm font-medium text-muted-foreground">External Sub (JWT)</label>
+              <div className="text-sm font-medium text-muted-foreground">External Sub (JWT)</div>
               <div className="flex items-center gap-2 mt-1">
                 <code className="text-sm bg-muted px-2 py-1 rounded font-mono flex-1 break-all">
                   {user.external_sub}
@@ -139,7 +139,7 @@ export default function UserDetailPage() {
             </div>
 
             <div>
-              <label className="text-sm font-medium text-muted-foreground">Created At</label>
+              <div className="text-sm font-medium text-muted-foreground">Created At</div>
               <p className="text-sm mt-1">{formatDate(user.created_at)}</p>
             </div>
           </CardContent>

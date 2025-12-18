@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/hex"
@@ -48,8 +49,8 @@ type CreateWalletRequest struct {
 	Owner             *OwnerInput        `json:"owner,omitempty"`
 	OwnerID           *uuid.UUID         `json:"owner_id,omitempty"`
 	AdditionalSigners []AdditionalSigner `json:"additional_signers,omitempty"`
-	RecoveryMethod    string             `json:"recovery_method,omitempty"`    // password, cloud_backup, passkey
-	RecoveryHint      string             `json:"recovery_hint,omitempty"`      // Optional hint for password recovery
+	RecoveryMethod    string             `json:"recovery_method,omitempty"` // password, cloud_backup, passkey
+	RecoveryHint      string             `json:"recovery_hint,omitempty"`   // Optional hint for password recovery
 }
 
 // OwnerInput for creating a new owner
@@ -92,7 +93,7 @@ type SignTransactionResponse struct {
 
 // SignMessageAPIRequest represents the API request to sign a personal message
 type SignMessageAPIRequest struct {
-	Message  string `json:"message"`           // The message to sign
+	Message  string `json:"message"`            // The message to sign
 	Encoding string `json:"encoding,omitempty"` // "utf8" (default) or "hex"
 }
 
@@ -427,6 +428,9 @@ func (s *Server) handleUpdateWallet(w http.ResponseWriter, r *http.Request, wall
 		return
 	}
 
+	// Restore body so signature verification includes the original request body.
+	r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
 	// Verify authorization signature
 	if err := s.verifyAuthorizationSignature(r, walletID); err != nil {
 		s.writeError(w, apperrors.InvalidSignature(err.Error()))
@@ -523,6 +527,9 @@ func (s *Server) handleSignTransaction(w http.ResponseWriter, r *http.Request, w
 		return
 	}
 
+	// Restore body so canonical payload includes the original request body.
+	r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
 	// Parse value
 	value, ok := new(big.Int).SetString(req.Value, 10)
 	if !ok {
@@ -593,6 +600,7 @@ func (s *Server) handleSignTransaction(w http.ResponseWriter, r *http.Request, w
 
 	signedTx, err := s.walletService.SignTransaction(r.Context(), userSub, &app.SignTransactionRequest{
 		WalletID:         walletID,
+		Method:           "eth_signTransaction",
 		To:               req.To,
 		Value:            value,
 		Data:             data,
@@ -652,8 +660,20 @@ func (s *Server) handleSignMessage(w http.ResponseWriter, r *http.Request, walle
 		return
 	}
 
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeBadRequest,
+			"Failed to read request body",
+			err.Error(),
+			http.StatusBadRequest,
+		))
+		return
+	}
+	r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
 	var req SignMessageAPIRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(bodyBytes, &req); err != nil {
 		s.writeError(w, apperrors.NewWithDetail(
 			apperrors.ErrCodeBadRequest,
 			"Invalid request body",
@@ -733,17 +753,14 @@ func (s *Server) handleSignMessage(w http.ResponseWriter, r *http.Request, walle
 // verifyAuthorizationSignature verifies the x-authorization-signature header
 // Returns nil for app-managed wallets (no owner) as they don't require signature verification
 func (s *Server) verifyAuthorizationSignature(r *http.Request, walletID uuid.UUID) error {
-	// Get wallet to determine owner
-	userSub, _ := getUserSub(r.Context())
-	wallet, err := s.walletService.GetWallet(r.Context(), walletID, userSub)
+	// Get wallet to determine owner (no user ownership check here; this is purely auth-signature verification)
+	walletRepo := storage.NewWalletRepository(s.store)
+	wallet, err := walletRepo.GetByID(r.Context(), walletID)
 	if err != nil {
 		return err
 	}
-
-	// App-managed wallets (no owner) don't require authorization signature
-	// App secret authentication is sufficient
-	if wallet.OwnerID == nil {
-		return nil
+	if wallet == nil {
+		return apperrors.WalletNotFound(walletID.String())
 	}
 
 	// Build canonical payload
@@ -760,6 +777,11 @@ func (s *Server) verifyAuthorizationSignature(r *http.Request, walletID uuid.UUI
 			"No authorization signatures provided",
 			401,
 		)
+	}
+
+	// If wallet has no owner, fall back to app-level authorization keys.
+	if wallet.OwnerID == nil {
+		return s.verifyAppAuthorizationSignature(r)
 	}
 
 	// Get owner information
@@ -900,9 +922,23 @@ func (s *Server) handleExportWallet(w http.ResponseWriter, r *http.Request, wall
 		return
 	}
 
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeBadRequest,
+			"Failed to read request body",
+			err.Error(),
+			http.StatusBadRequest,
+		))
+		return
+	}
+
+	// Restore body so canonical payload/signature verification sees the original request.
+	r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
 	// Parse request body
 	var req ExportWalletRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(bodyBytes, &req); err != nil {
 		s.writeError(w, apperrors.NewWithDetail(
 			apperrors.ErrCodeBadRequest,
 			"Invalid request body",
@@ -1258,6 +1294,30 @@ func (s *Server) handleAuthenticateWallet(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeBadRequest,
+			"Failed to read request body",
+			err.Error(),
+			http.StatusBadRequest,
+		))
+		return
+	}
+	r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+	// Build canonical payload once (before body is consumed by JSON decoding)
+	_, canonicalPayload, err := auth.BuildCanonicalPayload(r)
+	if err != nil {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeInternalError,
+			"Failed to build canonical payload",
+			err.Error(),
+			http.StatusInternalServerError,
+		))
+		return
+	}
+
 	// Verify authorization signature
 	if err := s.verifyAuthorizationSignature(r, walletID); err != nil {
 		s.writeError(w, apperrors.NewWithDetail(
@@ -1273,7 +1333,7 @@ func (s *Server) handleAuthenticateWallet(w http.ResponseWriter, r *http.Request
 	var req struct {
 		Message string `json:"message"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(bodyBytes, &req); err != nil {
 		s.writeError(w, apperrors.NewWithDetail(
 			apperrors.ErrCodeBadRequest,
 			"Invalid request body",
@@ -1306,18 +1366,6 @@ func (s *Server) handleAuthenticateWallet(w http.ResponseWriter, r *http.Request
 	}
 	if wallet == nil {
 		s.writeError(w, apperrors.ErrNotFound)
-		return
-	}
-
-	// Build canonical payload for authorization verification
-	_, canonicalPayload, err := auth.BuildCanonicalPayload(r)
-	if err != nil {
-		s.writeError(w, apperrors.NewWithDetail(
-			apperrors.ErrCodeInternalError,
-			"Failed to build canonical payload",
-			err.Error(),
-			http.StatusInternalServerError,
-		))
 		return
 	}
 

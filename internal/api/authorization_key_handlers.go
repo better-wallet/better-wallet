@@ -18,7 +18,7 @@ type AuthorizationKeyResponse struct {
 	Algorithm   string    `json:"algorithm"`
 	OwnerEntity string    `json:"owner_entity"`
 	Status      string    `json:"status"`
-	CreatedAt   int64     `json:"created_at"`  // Unix timestamp in milliseconds
+	CreatedAt   int64     `json:"created_at"` // Unix timestamp in milliseconds
 	RotatedAt   *int64    `json:"rotated_at,omitempty"`
 }
 
@@ -282,6 +282,17 @@ func (s *Server) handleCreateAuthorizationKey(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	appID, err := storage.RequireAppID(r.Context())
+	if err != nil {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeUnauthorized,
+			"Missing app context",
+			err.Error(),
+			http.StatusUnauthorized,
+		))
+		return
+	}
+
 	// Create authorization key
 	key := &types.AuthorizationKey{
 		ID:          uuid.New(),
@@ -289,6 +300,7 @@ func (s *Server) handleCreateAuthorizationKey(w http.ResponseWriter, r *http.Req
 		Algorithm:   types.AlgorithmP256,
 		OwnerEntity: req.OwnerEntity,
 		Status:      types.StatusActive,
+		AppID:       &appID,
 	}
 
 	repo := storage.NewAuthorizationKeyRepository(s.store)

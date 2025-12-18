@@ -1,6 +1,6 @@
 'use client'
 
-import { AlertCircle, ArrowLeft, CheckCircle2, ChevronDown, ChevronRight, Play, XCircle } from 'lucide-react'
+import { AlertCircle, ArrowLeft, CheckCircle2, ChevronRight, Play, XCircle } from 'lucide-react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { useState } from 'react'

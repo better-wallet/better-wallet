@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -85,6 +86,9 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request, walletID uuid
 		return
 	}
 
+	// Restore the body so canonical payload/signature verification sees the original request.
+	r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
 	var rpcReq RPCRequest
 	if err := json.Unmarshal(bodyBytes, &rpcReq); err != nil {
 		s.writeError(w, apperrors.NewWithDetail(
@@ -93,6 +97,12 @@ func (s *Server) handleRPC(w http.ResponseWriter, r *http.Request, walletID uuid
 			err.Error(),
 			http.StatusBadRequest,
 		))
+		return
+	}
+
+	// Wallet operations via /rpc always require an authorization signature.
+	if err := s.verifyAuthorizationSignature(r, walletID); err != nil {
+		s.writeError(w, apperrors.InvalidSignature(err.Error()))
 		return
 	}
 
@@ -252,6 +262,7 @@ func (s *Server) handleEthSendTransaction(
 	// Sign transaction
 	signedTx, err := s.walletService.SignTransaction(r.Context(), userSub, &app.SignTransactionRequest{
 		WalletID:         walletID,
+		Method:           "eth_sendTransaction",
 		To:               p.Transaction.To,
 		Value:            value,
 		Data:             data,
@@ -428,6 +439,7 @@ func (s *Server) handleEthSignTransaction(
 	// Sign transaction
 	signedTx, err := s.walletService.SignTransaction(r.Context(), userSub, &app.SignTransactionRequest{
 		WalletID:         walletID,
+		Method:           "eth_signTransaction",
 		To:               p.Transaction.To,
 		Value:            value,
 		Data:             data,
@@ -502,48 +514,6 @@ func (s *Server) handleEthSignTypedData(
 		return
 	}
 
-	// Verify wallet ownership (app-scoped by context automatically)
-	wallet, err := s.walletService.GetWallet(r.Context(), walletID, userSub)
-	if err != nil {
-		s.writeError(w, apperrors.NewWithDetail(
-			apperrors.ErrCodeInternalError,
-			"Failed to get wallet",
-			err.Error(),
-			http.StatusInternalServerError,
-		))
-		return
-	}
-	if wallet == nil {
-		s.writeError(w, apperrors.ErrNotFound)
-		return
-	}
-
-	// For app-managed wallets (no owner), skip signature verification - app secret auth is sufficient
-	// For user-owned wallets, verify authorization signatures
-	if wallet.OwnerID != nil {
-		owner, err := s.walletService.GetOwner(r.Context(), *wallet.OwnerID)
-		if err != nil {
-			s.writeError(w, apperrors.NewWithDetail(
-				apperrors.ErrCodeInternalError,
-				"Failed to get owner",
-				err.Error(),
-				http.StatusInternalServerError,
-			))
-			return
-		}
-
-		verifier := auth.NewSignatureVerifier()
-		if err := verifier.VerifyOwnerSignature(signatures, canonicalBytes, owner); err != nil {
-			s.writeError(w, apperrors.NewWithDetail(
-				apperrors.ErrCodeForbidden,
-				"Invalid authorization signature",
-				err.Error(),
-				http.StatusForbidden,
-			))
-			return
-		}
-	}
-
 	// Convert TypedData to app.TypedData
 	typedData := app.TypedData{
 		Types:       convertTypes(p.TypedData.Types),
@@ -552,9 +522,18 @@ func (s *Server) handleEthSignTypedData(
 		Message:     p.TypedData.Message,
 	}
 
-	// Sign the typed data (app-scoped by context automatically)
-	signature, err := s.walletService.SignTypedData(r.Context(), walletID, typedData)
+	// Sign the typed data (ownership/authz/policy enforced in service layer)
+	signature, err := s.walletService.SignTypedData(r.Context(), userSub, &app.SignTypedDataRequest{
+		WalletID:         walletID,
+		TypedData:        typedData,
+		Signatures:       signatures,
+		CanonicalPayload: canonicalBytes,
+	})
 	if err != nil {
+		if appErr, ok := apperrors.IsAppError(err); ok {
+			s.writeError(w, appErr)
+			return
+		}
 		s.writeError(w, apperrors.NewWithDetail(
 			apperrors.ErrCodeInternalError,
 			"Failed to sign typed data",

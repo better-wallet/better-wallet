@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"sort"
 )
 
@@ -33,10 +34,7 @@ func BuildCanonicalPayload(r *http.Request) (*CanonicalPayload, []byte, error) {
 	// Restore the body for subsequent handlers
 	r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 
-	// Build the full URL
-	// Use the path and query string only, without host
-	// This allows signatures to be portable across different deployment environments
-	fullURL := r.URL.RequestURI()
+	fullURL := buildCanonicalURL(r)
 
 	// Extract relevant headers (only those that should be signed)
 	headers := make(map[string]string)
@@ -62,6 +60,34 @@ func BuildCanonicalPayload(r *http.Request) (*CanonicalPayload, []byte, error) {
 	}
 
 	return payload, canonicalBytes, nil
+}
+
+func buildCanonicalURL(r *http.Request) string {
+	// Backward compat / self-host flexibility:
+	// - "relative" keeps the old behavior (path + query only)
+	// - default is "absolute" to align with canonical request signing schemes
+	if os.Getenv("BETTER_WALLET_CANONICAL_URL_MODE") == "relative" {
+		return r.URL.RequestURI()
+	}
+
+	scheme := "http"
+	if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
+		scheme = proto
+	} else if r.TLS != nil {
+		scheme = "https"
+	}
+
+	host := r.Host
+	if forwardedHost := r.Header.Get("X-Forwarded-Host"); forwardedHost != "" {
+		host = forwardedHost
+	}
+
+	if host == "" {
+		// Fallback to relative if host is unavailable.
+		return r.URL.RequestURI()
+	}
+
+	return fmt.Sprintf("%s://%s%s", scheme, host, r.URL.RequestURI())
 }
 
 // SerializeCanonical serializes a payload to RFC 8785 canonical JSON

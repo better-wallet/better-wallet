@@ -36,9 +36,9 @@ type PolicyResponse struct {
 	Version   string                 `json:"version"`
 	Name      string                 `json:"name"`
 	ChainType string                 `json:"chain_type"`
-	Rules     map[string]interface{} `json:"rules"`                  // Stored as raw JSON for flexibility
-	OwnerID   *uuid.UUID             `json:"owner_id,omitempty"`     // nil for app-owned policies
-	CreatedAt int64                  `json:"created_at"`             // Unix timestamp in milliseconds
+	Rules     map[string]interface{} `json:"rules"`              // Stored as raw JSON for flexibility
+	OwnerID   *uuid.UUID             `json:"owner_id,omitempty"` // nil for app-owned policies
+	CreatedAt int64                  `json:"created_at"`         // Unix timestamp in milliseconds
 }
 
 // PolicyConditionInput represents a condition in the create request
@@ -641,10 +641,9 @@ func (s *Server) verifyPolicyAuthorizationSignature(r *http.Request, policyID uu
 		)
 	}
 
-	// For app-owned policies (OwnerID is nil), authorization signature is not required
-	// App authentication is sufficient
+	// For app-owned policies (OwnerID is nil), require an app-level authorization signature.
 	if policy.OwnerID == nil {
-		return nil
+		return s.verifyAppAuthorizationSignature(r)
 	}
 
 	// Get the owner authorization key

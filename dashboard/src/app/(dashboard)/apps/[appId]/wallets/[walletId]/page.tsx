@@ -1,6 +1,6 @@
 'use client'
 
-import { ArrowLeft, Check, Clock, Copy, ExternalLink, Key, Plus, Shield, Trash2, X } from 'lucide-react'
+import { ArrowLeft, Check, Clock, Copy, ExternalLink, Key, Plus, Shield, Trash2 } from 'lucide-react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
@@ -448,14 +448,16 @@ export default function WalletDetailPage() {
             {allPolicies?.data && allPolicies.data.length > 0 ? (
               <div className="space-y-3 max-h-[300px] overflow-y-auto">
                 {allPolicies.data.map((policy) => (
-                  <div
+                  <button
                     key={policy.id}
-                    className="flex items-center space-x-3 p-3 border rounded-lg hover:bg-accent/50 cursor-pointer"
+                    type="button"
+                    className="w-full text-left flex items-center space-x-3 p-3 border rounded-lg hover:bg-accent/50 bg-transparent"
                     onClick={() => handleTogglePolicy(policy.id)}
                   >
                     <Checkbox
                       checked={selectedPolicies.includes(policy.id)}
                       onCheckedChange={() => handleTogglePolicy(policy.id)}
+                      onClick={(e) => e.stopPropagation()}
                     />
                     <div className="flex-1">
                       <div className="font-medium">{policy.name}</div>
@@ -466,7 +468,7 @@ export default function WalletDetailPage() {
                     {selectedPolicies.includes(policy.id) && (
                       <Check className="h-4 w-4 text-primary" />
                     )}
-                  </div>
+                  </button>
                 ))}
               </div>
             ) : (

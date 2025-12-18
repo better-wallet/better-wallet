@@ -253,6 +253,46 @@ func (r *AuthorizationKeyRepository) GetByAppID(ctx context.Context, appID uuid.
 	return keys, nil
 }
 
+// GetActiveByAppID retrieves all active authorization keys for an app
+func (r *AuthorizationKeyRepository) GetActiveByAppID(ctx context.Context, appID uuid.UUID) ([]*types.AuthorizationKey, error) {
+	query := `
+		SELECT id, public_key, algorithm, owner_entity, status, app_id, created_at, rotated_at
+		FROM authorization_keys
+		WHERE app_id = $1 AND status = 'active'
+		ORDER BY created_at DESC
+	`
+
+	rows, err := r.store.pool.Query(ctx, query, appID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query authorization keys: %w", err)
+	}
+	defer rows.Close()
+
+	var keys []*types.AuthorizationKey
+	for rows.Next() {
+		key := &types.AuthorizationKey{}
+		if err := rows.Scan(
+			&key.ID,
+			&key.PublicKey,
+			&key.Algorithm,
+			&key.OwnerEntity,
+			&key.Status,
+			&key.AppID,
+			&key.CreatedAt,
+			&key.RotatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan authorization key: %w", err)
+		}
+		keys = append(keys, key)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating authorization keys: %w", err)
+	}
+
+	return keys, nil
+}
+
 // UpdateStatus updates the status of an authorization key
 func (r *AuthorizationKeyRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status string) error {
 	query := `

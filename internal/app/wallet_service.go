@@ -20,8 +20,8 @@ import (
 	apperrors "github.com/better-wallet/better-wallet/pkg/errors"
 	"github.com/better-wallet/better-wallet/pkg/types"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/crypto"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
 	"github.com/google/uuid"
 )
@@ -67,14 +67,14 @@ func IsAppManagedWallet(wallet *types.Wallet) bool {
 type CreateWalletRequest struct {
 	UserSub           string
 	ChainType         string
-	OwnerPublicKey    string            // Hex-encoded public key (if creating new owner)
-	OwnerAlgorithm    string            // "p256" (if creating new owner)
-	OwnerID           *uuid.UUID        // Existing authorization key or quorum ID
+	OwnerPublicKey    string     // Hex-encoded public key (if creating new owner)
+	OwnerAlgorithm    string     // "p256" (if creating new owner)
+	OwnerID           *uuid.UUID // Existing authorization key or quorum ID
 	ExecBackend       string
-	PolicyIDs         []uuid.UUID       // Policy IDs to attach
+	PolicyIDs         []uuid.UUID        // Policy IDs to attach
 	AdditionalSigners []AdditionalSigner // Session signers to create
-	RecoveryMethod    string            // "password", "cloud_backup", or "passkey"
-	RecoveryHint      string            // Optional hint for password recovery
+	RecoveryMethod    string             // "password", "cloud_backup", or "passkey"
+	RecoveryHint      string             // Optional hint for password recovery
 }
 
 // CreateWalletResponse includes wallet info
@@ -342,7 +342,10 @@ func (s *WalletService) CreateWallet(ctx context.Context, req *CreateWalletReque
 
 // SignTransactionRequest represents a request to sign a transaction
 type SignTransactionRequest struct {
-	WalletID         uuid.UUID
+	WalletID uuid.UUID
+	// Method is the signing method for policy matching (e.g. eth_signTransaction, eth_sendTransaction).
+	// If empty, defaults to eth_signTransaction for backward compatibility.
+	Method           string
 	To               string
 	Value            *big.Int
 	Data             []byte
@@ -515,11 +518,15 @@ func (s *WalletService) SignTransaction(ctx context.Context, userSub string, req
 	}
 
 	// Evaluate policies
+	method := req.Method
+	if method == "" {
+		method = "eth_signTransaction"
+	}
 	evalCtx := &policy.EvaluationContext{
 		WalletID:      wallet.ID.String(),
 		ChainType:     wallet.ChainType,
 		Address:       wallet.Address,
-		Method:        "eth_signTransaction", // Required for policy method matching
+		Method:        method,
 		To:            &req.To,
 		Value:         req.Value,
 		Data:          req.Data,
@@ -730,15 +737,15 @@ func (s *WalletService) CreateSessionSigner(ctx context.Context, req *CreateSess
 	}
 
 	ss := &types.SessionSigner{
-		ID:              uuid.New(),
-		WalletID:        wallet.ID,
-		SignerID:        authKey.ID.String(),
+		ID:               uuid.New(),
+		WalletID:         wallet.ID,
+		SignerID:         authKey.ID.String(),
 		PolicyOverrideID: req.PolicyOverrideID,
-		AllowedMethods:  allowedMethods,
-		MaxValue:        maxValueStr,
-		MaxTxs:          req.MaxTxs,
-		TTLExpiresAt:    time.Now().Add(req.TTL),
-		AppID:           &appID,
+		AllowedMethods:   allowedMethods,
+		MaxValue:         maxValueStr,
+		MaxTxs:           req.MaxTxs,
+		TTLExpiresAt:     time.Now().Add(req.TTL),
+		AppID:            &appID,
 	}
 	if err := s.sessionRepo.CreateTx(ctx, tx, ss); err != nil {
 		return nil, nil, err
@@ -1199,12 +1206,12 @@ func (s *WalletService) UpdateWallet(ctx context.Context, req *UpdateWalletReque
 		// Insert new session signers
 		for _, signer := range *req.AdditionalSigners {
 			ss := &types.SessionSigner{
-				ID:            uuid.New(),
-				WalletID:      req.WalletID,
-				SignerID:      signer.SignerID.String(),
-				TTLExpiresAt:  time.Now().Add(365 * 24 * time.Hour), // Default 1 year
+				ID:             uuid.New(),
+				WalletID:       req.WalletID,
+				SignerID:       signer.SignerID.String(),
+				TTLExpiresAt:   time.Now().Add(365 * 24 * time.Hour), // Default 1 year
 				AllowedMethods: []string{"sign_transaction"},
-				AppID:         &signerAppID,
+				AppID:          &signerAppID,
 			}
 
 			// Store override policy IDs if provided
@@ -1608,19 +1615,112 @@ type TypedData struct {
 	Message     map[string]interface{} `json:"message"`
 }
 
-// SignTypedData signs EIP-712 typed data
-func (s *WalletService) SignTypedData(ctx context.Context, walletID uuid.UUID, typedData TypedData) (string, error) {
+// SignTypedDataRequest represents a request to sign EIP-712 typed data (eth_signTypedData_v4).
+type SignTypedDataRequest struct {
+	WalletID         uuid.UUID
+	TypedData        TypedData
+	Signatures       []string
+	CanonicalPayload []byte
+}
+
+// SignTypedData signs EIP-712 typed data, enforcing ownership, authorization signatures, and policies.
+func (s *WalletService) SignTypedData(ctx context.Context, userSub string, req *SignTypedDataRequest) (string, error) {
 	// Get wallet (automatically scoped to app_id from context)
-	wallet, err := s.walletRepo.GetByID(ctx, walletID)
+	wallet, err := s.walletRepo.GetByID(ctx, req.WalletID)
 	if err != nil {
 		return "", fmt.Errorf("failed to get wallet: %w", err)
 	}
 	if wallet == nil {
-		return "", fmt.Errorf("wallet not found")
+		return "", apperrors.WalletNotFound(req.WalletID.String())
+	}
+
+	// For user-owned wallets, verify ownership and authorization signature.
+	// For app-managed wallets, skip user verification - app secret auth is sufficient.
+	var matchedSignerID string
+	if !IsAppManagedWallet(wallet) {
+		if wallet.UserID != nil {
+			user, err := s.userRepo.GetByExternalSub(ctx, userSub)
+			if err != nil {
+				return "", fmt.Errorf("failed to get user: %w", err)
+			}
+			if user == nil || user.ID != *wallet.UserID {
+				return "", apperrors.ErrForbidden
+			}
+		}
+
+		var err error
+		matchedSignerID, err = s.verifyAuthorizationSignature(ctx, wallet, req.Signatures, req.CanonicalPayload, types.SignMethodTypedData)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	// Load policies (session signer override if present)
+	var sessionSigner *types.SessionSigner
+	if matchedSignerID != "" && wallet.OwnerID != nil && matchedSignerID != wallet.OwnerID.String() {
+		signerUUID, err := uuid.Parse(matchedSignerID)
+		if err == nil {
+			sessionSigner, _ = s.sessionRepo.GetByID(ctx, signerUUID)
+		}
+	}
+
+	var policies []*types.Policy
+	if sessionSigner != nil && sessionSigner.PolicyOverrideID != nil {
+		policy, err := s.policyRepo.GetByID(ctx, *sessionSigner.PolicyOverrideID)
+		if err != nil {
+			return "", fmt.Errorf("failed to load override policy: %w", err)
+		}
+		if policy != nil {
+			policies = []*types.Policy{policy}
+		}
+	} else {
+		policies, err = s.policyRepo.GetByWalletID(ctx, wallet.ID)
+		if err != nil {
+			return "", fmt.Errorf("failed to load policies: %w", err)
+		}
+	}
+
+	conditionSets, err := s.loadConditionSetsForPolicies(ctx, policies)
+	if err != nil {
+		return "", fmt.Errorf("failed to load condition sets: %w", err)
+	}
+
+	evalCtx := &policy.EvaluationContext{
+		WalletID:         wallet.ID.String(),
+		ChainType:        wallet.ChainType,
+		Address:          wallet.Address,
+		Method:           "eth_signTypedData_v4",
+		TypedDataDomain:  req.TypedData.Domain,
+		TypedDataMessage: req.TypedData.Message,
+		Actor:            userSub,
+		SessionSigner:    sessionSigner,
+		Timestamp:        time.Now(),
+		ConditionSets:    conditionSets,
+	}
+
+	result, err := s.policyEng.Evaluate(ctx, policies, evalCtx)
+	if err != nil {
+		return "", fmt.Errorf("failed to evaluate policy: %w", err)
+	}
+	if result.Decision == policy.DecisionDeny {
+		log := &types.AuditLog{
+			Actor:        userSub,
+			Action:       "wallet.sign_typed_data",
+			ResourceType: "wallet",
+			ResourceID:   wallet.ID.String(),
+			PolicyResult: &result.Reason,
+			ClientIP:     middleware.GetClientIP(ctx),
+			UserAgent:    middleware.GetUserAgent(ctx),
+		}
+		if matchedSignerID != "" && wallet.OwnerID != nil && matchedSignerID != wallet.OwnerID.String() {
+			log.SignerID = &matchedSignerID
+		}
+		s.auditRepo.Create(ctx, log)
+		return "", apperrors.PolicyDenied(result.Reason)
 	}
 
 	// Encode typed data according to EIP-712
-	hash, err := encodeTypedData(typedData)
+	hash, err := encodeTypedData(req.TypedData)
 	if err != nil {
 		return "", fmt.Errorf("failed to encode typed data: %w", err)
 	}
@@ -1657,6 +1757,27 @@ func (s *WalletService) SignTypedData(ctx context.Context, walletID uuid.UUID, t
 	if err != nil {
 		return "", fmt.Errorf("failed to sign typed data: %w", err)
 	}
+
+	// Adjust v value for Ethereum compatibility (27 or 28 instead of 0 or 1)
+	if len(signature) == 65 && (signature[64] == 0 || signature[64] == 1) {
+		signature[64] += 27
+	}
+
+	// Audit log
+	log := &types.AuditLog{
+		Actor:        userSub,
+		Action:       "wallet.sign_typed_data",
+		ResourceType: "wallet",
+		ResourceID:   wallet.ID.String(),
+		ClientIP:     middleware.GetClientIP(ctx),
+		UserAgent:    middleware.GetUserAgent(ctx),
+	}
+	policyResultStr := "allow"
+	log.PolicyResult = &policyResultStr
+	if matchedSignerID != "" && wallet.OwnerID != nil && matchedSignerID != wallet.OwnerID.String() {
+		log.SignerID = &matchedSignerID
+	}
+	s.auditRepo.Create(ctx, log)
 
 	// Format signature as hex string (0x-prefixed)
 	return formatSignature(signature), nil

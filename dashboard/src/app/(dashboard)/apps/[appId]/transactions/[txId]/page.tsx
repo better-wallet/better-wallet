@@ -173,7 +173,7 @@ export default function TransactionDetailPage() {
           <CardContent className="space-y-4">
             {tx.tx_hash && (
               <div>
-                <label className="text-sm font-medium text-muted-foreground">Transaction Hash</label>
+                <div className="text-sm font-medium text-muted-foreground">Transaction Hash</div>
                 <div className="flex items-center gap-2 mt-1">
                   <code className="text-sm bg-muted px-2 py-1 rounded font-mono flex-1 break-all">{tx.tx_hash}</code>
                   <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => copyToClipboard(tx.tx_hash!)}>
@@ -184,7 +184,7 @@ export default function TransactionDetailPage() {
             )}
 
             <div>
-              <label className="text-sm font-medium text-muted-foreground">Internal ID</label>
+              <div className="text-sm font-medium text-muted-foreground">Internal ID</div>
               <div className="flex items-center gap-2 mt-1">
                 <code className="text-sm bg-muted px-2 py-1 rounded font-mono flex-1 break-all">{tx.id}</code>
                 <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => copyToClipboard(tx.id)}>
@@ -194,7 +194,7 @@ export default function TransactionDetailPage() {
             </div>
 
             <div>
-              <label className="text-sm font-medium text-muted-foreground">Method</label>
+              <div className="text-sm font-medium text-muted-foreground">Method</div>
               <div className="mt-1">
                 <Badge variant="outline">{tx.method}</Badge>
               </div>
@@ -202,11 +202,11 @@ export default function TransactionDetailPage() {
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-sm font-medium text-muted-foreground">Nonce</label>
+                <div className="text-sm font-medium text-muted-foreground">Nonce</div>
                 <p className="mt-1 font-mono">{tx.nonce ?? '-'}</p>
               </div>
               <div>
-                <label className="text-sm font-medium text-muted-foreground">Block</label>
+                <div className="text-sm font-medium text-muted-foreground">Block</div>
                 <p className="mt-1 font-mono">-</p>
               </div>
             </div>
@@ -223,7 +223,7 @@ export default function TransactionDetailPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
-              <label className="text-sm font-medium text-muted-foreground">From (Wallet)</label>
+              <div className="text-sm font-medium text-muted-foreground">From (Wallet)</div>
               <div className="flex items-center gap-2 mt-1">
                 <code className="text-sm bg-muted px-2 py-1 rounded font-mono flex-1 break-all">
                   {tx.wallet_address}
@@ -240,7 +240,7 @@ export default function TransactionDetailPage() {
             </div>
 
             <div>
-              <label className="text-sm font-medium text-muted-foreground">To</label>
+              <div className="text-sm font-medium text-muted-foreground">To</div>
               {tx.to_address ? (
                 <div className="flex items-center gap-2 mt-1">
                   <code className="text-sm bg-muted px-2 py-1 rounded font-mono flex-1 break-all">
@@ -263,7 +263,7 @@ export default function TransactionDetailPage() {
             </div>
 
             <div>
-              <label className="text-sm font-medium text-muted-foreground">Value</label>
+              <div className="text-sm font-medium text-muted-foreground">Value</div>
               <p className="mt-1 font-mono text-lg">{formatValue(tx.value)}</p>
               {tx.value && tx.value !== '0' && (
                 <p className="text-xs text-muted-foreground font-mono">{tx.value} wei</p>
@@ -283,22 +283,22 @@ export default function TransactionDetailPage() {
           <CardContent className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-sm font-medium text-muted-foreground">Gas Limit</label>
+                <div className="text-sm font-medium text-muted-foreground">Gas Limit</div>
                 <p className="mt-1 font-mono">{tx.gas_limit?.toLocaleString() ?? '-'}</p>
               </div>
               <div>
-                <label className="text-sm font-medium text-muted-foreground">Gas Used</label>
+                <div className="text-sm font-medium text-muted-foreground">Gas Used</div>
                 <p className="mt-1 font-mono">-</p>
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-sm font-medium text-muted-foreground">Max Fee</label>
+                <div className="text-sm font-medium text-muted-foreground">Max Fee</div>
                 <p className="mt-1 font-mono">{formatGwei(tx.max_fee_per_gas)}</p>
               </div>
               <div>
-                <label className="text-sm font-medium text-muted-foreground">Max Priority Fee</label>
+                <div className="text-sm font-medium text-muted-foreground">Max Priority Fee</div>
                 <p className="mt-1 font-mono">{formatGwei(tx.max_priority_fee_per_gas)}</p>
               </div>
             </div>

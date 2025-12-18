@@ -77,7 +77,7 @@ func TestBuildCanonicalPayload(t *testing.T) {
 			// Verify fields
 			assert.Equal(t, "v1", payload.Version)
 			assert.Equal(t, tt.expectedMethod, payload.Method)
-			assert.Equal(t, tt.expectedURL, payload.URL)
+			assert.Equal(t, "http://example.com"+tt.expectedURL, payload.URL)
 			assert.Equal(t, tt.expectedBody, payload.Body)
 
 			// Verify headers are included
