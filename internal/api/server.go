@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/better-wallet/better-wallet/internal/config"
 	"github.com/better-wallet/better-wallet/internal/middleware"
 	"github.com/better-wallet/better-wallet/internal/storage"
 	"github.com/better-wallet/better-wallet/pkg/crypto"
+	apperrors "github.com/better-wallet/better-wallet/pkg/errors"
 )
 
 // Server represents the HTTP server
@@ -88,7 +90,9 @@ func (s *Server) Start() error {
 
 	v1Handler := s.appAuthMiddleware.Authenticate(
 		s.userAuthMiddleware.Authenticate(
-			s.idempotencyMiddleware.Handle(v1Mux),
+			s.requireUserMiddleware(
+				s.idempotencyMiddleware.Handle(v1Mux),
+			),
 		),
 	)
 	rootMux.Handle("/v1/", v1Handler)
@@ -104,6 +108,49 @@ func (s *Server) Start() error {
 
 	fmt.Printf("Starting server on port %d...\n", s.config.Port)
 	return s.httpServer.ListenAndServe()
+}
+
+func (s *Server) requireUserMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isUserRequiredRequest(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		if _, ok := middleware.GetUserSub(r.Context()); !ok {
+			s.writeError(w, apperrors.ErrUnauthorized)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+func isUserRequiredRequest(r *http.Request) bool {
+	path := r.URL.Path
+	method := r.Method
+
+	// Allow app-only creation of app-managed wallets.
+	if path == "/v1/wallets" && method == http.MethodPost {
+		return false
+	}
+
+	// Allow app-only creation of app-owned policies.
+	if path == "/v1/policies" && method == http.MethodPost {
+		return false
+	}
+
+	// Allow wallet RPC without user JWT (authorization signature is required by the handler).
+	normalizedPath := strings.TrimSuffix(path, "/")
+	if method == http.MethodPost && strings.HasPrefix(normalizedPath, "/v1/wallets/") {
+		parts := strings.Split(strings.TrimPrefix(normalizedPath, "/v1/wallets/"), "/")
+		if len(parts) == 2 && parts[1] == "rpc" {
+			return false
+		}
+	}
+
+	// Default: require user for all other v1 endpoints.
+	return true
 }
 
 // Shutdown gracefully shuts down the server

@@ -118,6 +118,12 @@ Many endpoints that operate on **user-owned** resources also require a user JWT:
 Authorization: Bearer <your-jwt-token>
 ```
 
+By default, `/v1/*` endpoints require a user JWT. The server only allows app-only calls for:
+
+- `POST /v1/wallets` (create app-managed wallets)
+- `POST /v1/policies` (create app-owned policies)
+- `POST /v1/wallets/{wallet_id}/rpc` (requires an authorization signature)
+
 ### Authorization Signatures (Canonical JSON)
 
 Certain privileged operations require an additional request signature:
