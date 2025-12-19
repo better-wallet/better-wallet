@@ -350,6 +350,5 @@ bun run db:push
 ## Next Steps
 
 - [CLAUDE.md](../../CLAUDE.md) - Project coding guidelines and architecture
-- [Testing Strategy](../TESTING_STRATEGY.md) - Comprehensive testing guide
 - [API Reference](../api-reference/overview.md) - API documentation
 - [Architecture Overview](../getting-started/architecture-overview.md) - System design

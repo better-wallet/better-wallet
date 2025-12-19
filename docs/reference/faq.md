@@ -247,7 +247,6 @@ Typical monthly costs for a small deployment:
 
 - **GitHub Issues**: Bug reports and feature requests
 - **GitHub Discussions**: Questions and community support
-- **Discord**: Real-time community help
 
 ### How do I report security issues?
 

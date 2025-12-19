@@ -166,7 +166,6 @@ curl -X POST http://localhost:8080/v1/wallets/{wallet_id}/sign \
 
 - **GitHub Issues**: [Bug reports and feature requests](https://github.com/better-wallet/better-wallet/issues)
 - **GitHub Discussions**: [Questions and community support](https://github.com/better-wallet/better-wallet/discussions)
-- **Discord**: [Real-time help](https://discord.gg/better-wallet)
 
 ## License
 

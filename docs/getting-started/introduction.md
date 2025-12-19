@@ -145,5 +145,4 @@ No external message queues, caches, or complex dependencies required.
 ## Community
 
 - **GitHub**: [better-wallet/better-wallet](https://github.com/better-wallet/better-wallet)
-- **Discord**: [discord.gg/better-wallet](https://discord.gg/better-wallet)
 - **License**: MIT
