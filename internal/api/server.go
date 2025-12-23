@@ -23,6 +23,7 @@ type Server struct {
 	idempotencyMiddleware *middleware.IdempotencyMiddleware
 	httpServer            *http.Server
 	store                 *storage.Store
+	authKeyStore          AuthorizationKeyStore
 }
 
 // NewServer creates a new API server

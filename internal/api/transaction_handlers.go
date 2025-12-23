@@ -15,8 +15,8 @@ import (
 // TransactionResponse represents a transaction in API responses
 type TransactionResponse struct {
 	ID                   string  `json:"id"`
-	Hash                 *string `json:"hash,omitempty"`           // Transaction hash
-	CAIP2                *string `json:"caip2,omitempty"`          // CAIP-2 chain identifier (e.g., "eip155:1")
+	Hash                 *string `json:"hash,omitempty"`  // Transaction hash
+	CAIP2                *string `json:"caip2,omitempty"` // CAIP-2 chain identifier (e.g., "eip155:1")
 	WalletID             string  `json:"wallet_id"`
 	ChainID              int64   `json:"chain_id"`
 	Status               string  `json:"status"`
@@ -161,8 +161,8 @@ func (s *Server) handleListTransactions(w http.ResponseWriter, r *http.Request) 
 		}
 
 		// Verify user owns the wallet (app-scoped by context automatically)
-		wallet, err := s.walletService.GetWallet(r.Context(), walletID, userSub)
-		if err != nil || wallet == nil {
+		wallet, getErr := s.walletService.GetWallet(r.Context(), walletID, userSub)
+		if getErr != nil || wallet == nil {
 			s.writeError(w, apperrors.ErrForbidden)
 			return
 		}
@@ -170,15 +170,15 @@ func (s *Server) handleListTransactions(w http.ResponseWriter, r *http.Request) 
 		transactions, err = txRepo.ListByWalletID(r.Context(), walletID, limit)
 	} else {
 		// List all transactions for user's wallets (app-scoped by context automatically)
-		wallets, _, err := s.walletService.ListWallets(r.Context(), &app.ListWalletsRequest{
+		wallets, _, listErr := s.walletService.ListWallets(r.Context(), &app.ListWalletsRequest{
 			UserSub: userSub,
 			Limit:   1000, // Get all wallets for the user
 		})
-		if err != nil {
+		if listErr != nil {
 			s.writeError(w, apperrors.NewWithDetail(
 				apperrors.ErrCodeInternalError,
 				"Failed to get user wallets",
-				err.Error(),
+				listErr.Error(),
 				http.StatusInternalServerError,
 			))
 			return

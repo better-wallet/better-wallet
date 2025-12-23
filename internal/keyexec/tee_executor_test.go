@@ -3,6 +3,7 @@ package keyexec
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"math/big"
 	"net"
 	"testing"
@@ -643,4 +644,90 @@ func TestAESGCMHelpers(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, plaintext, decrypted)
 	})
+}
+
+// fakeDialer returns a pre-created connection for deterministic tests.
+type fakeDialer struct {
+	conn     net.Conn
+	platform string
+}
+
+func (d *fakeDialer) Dial(ctx context.Context) (net.Conn, error) {
+	return d.conn, nil
+}
+
+func (d *fakeDialer) Platform() string {
+	if d.platform == "" {
+		return "fake"
+	}
+	return d.platform
+}
+
+func TestTEEExecutor_CallEnclave_ResponseTooLarge(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+
+	go func() {
+		defer serverConn.Close()
+		lenBuf := make([]byte, 4)
+		if _, err := io.ReadFull(serverConn, lenBuf); err != nil {
+			return
+		}
+		reqLen := int(lenBuf[0])<<24 | int(lenBuf[1])<<16 | int(lenBuf[2])<<8 | int(lenBuf[3])
+		if reqLen > 0 {
+			reqData := make([]byte, reqLen)
+			_, _ = io.ReadFull(serverConn, reqData)
+		}
+
+		respLen := 10*1024*1024 + 1
+		lenBuf[0] = byte(respLen >> 24)
+		lenBuf[1] = byte(respLen >> 16)
+		lenBuf[2] = byte(respLen >> 8)
+		lenBuf[3] = byte(respLen)
+		_, _ = serverConn.Write(lenBuf)
+	}()
+
+	exec := &TEEExecutor{
+		dialer:            &fakeDialer{conn: clientConn, platform: "fake"},
+		connectionTimeout: 2 * time.Second,
+		masterKey:         make([]byte, 32),
+	}
+
+	_, err := exec.callEnclave(context.Background(), &EnclaveRequest{Operation: "generate_key"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "response too large")
+}
+
+func TestTEEExecutor_CallEnclave_InvalidJSON(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+
+	go func() {
+		defer serverConn.Close()
+		lenBuf := make([]byte, 4)
+		if _, err := io.ReadFull(serverConn, lenBuf); err != nil {
+			return
+		}
+		reqLen := int(lenBuf[0])<<24 | int(lenBuf[1])<<16 | int(lenBuf[2])<<8 | int(lenBuf[3])
+		if reqLen > 0 {
+			reqData := make([]byte, reqLen)
+			_, _ = io.ReadFull(serverConn, reqData)
+		}
+
+		payload := []byte("not-json")
+		lenBuf[0] = byte(len(payload) >> 24)
+		lenBuf[1] = byte(len(payload) >> 16)
+		lenBuf[2] = byte(len(payload) >> 8)
+		lenBuf[3] = byte(len(payload))
+		_, _ = serverConn.Write(lenBuf)
+		_, _ = serverConn.Write(payload)
+	}()
+
+	exec := &TEEExecutor{
+		dialer:            &fakeDialer{conn: clientConn, platform: "fake"},
+		connectionTimeout: 2 * time.Second,
+		masterKey:         make([]byte, 32),
+	}
+
+	_, err := exec.callEnclave(context.Background(), &EnclaveRequest{Operation: "generate_key"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to unmarshal response")
 }

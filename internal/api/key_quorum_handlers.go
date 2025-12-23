@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -199,8 +200,21 @@ func (s *Server) handleCreateKeyQuorum(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeBadRequest,
+			"Failed to read request body",
+			err.Error(),
+			http.StatusBadRequest,
+		))
+		return
+	}
+	// Restore body so signature verification includes the original payload.
+	r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
 	var req CreateKeyQuorumRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(bodyBytes, &req); err != nil {
 		s.writeError(w, apperrors.NewWithDetail(
 			apperrors.ErrCodeBadRequest,
 			"Invalid request body",

@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
@@ -15,11 +16,16 @@ import (
 // IdempotencyMiddleware handles idempotency for API requests
 // Stores first response for 24 hours
 type IdempotencyMiddleware struct {
-	repo *storage.IdempotencyRepo
+	repo idempotencyRepo
+}
+
+type idempotencyRepo interface {
+	Get(ctx context.Context, appID, key, method, url string) (*storage.IdempotencyRecord, error)
+	Store(ctx context.Context, record *storage.IdempotencyRecord) error
 }
 
 // NewIdempotencyMiddleware creates a new idempotency middleware
-func NewIdempotencyMiddleware(repo *storage.IdempotencyRepo) *IdempotencyMiddleware {
+func NewIdempotencyMiddleware(repo idempotencyRepo) *IdempotencyMiddleware {
 	return &IdempotencyMiddleware{
 		repo: repo,
 	}

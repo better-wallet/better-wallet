@@ -21,6 +21,7 @@ import (
 	"github.com/better-wallet/better-wallet/internal/middleware"
 	"github.com/better-wallet/better-wallet/pkg/auth"
 	"github.com/better-wallet/better-wallet/pkg/types"
+	"github.com/better-wallet/better-wallet/tests/mocks"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -89,7 +90,9 @@ func signCanonical(t *testing.T, priv *ecdsa.PrivateKey, canonical []byte) strin
 func TestHandleCreateWallet_NewOwnerRequiresValidSignature(t *testing.T) {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
-	pubBytes := elliptic.Marshal(elliptic.P256(), priv.PublicKey.X, priv.PublicKey.Y)
+	ecdhPub, err := priv.PublicKey.ECDH()
+	require.NoError(t, err)
+	pubBytes := ecdhPub.Bytes()
 	pubHex := "0x" + hex.EncodeToString(pubBytes)
 
 	now := time.Unix(1734000000, 0).UTC()
@@ -405,4 +408,43 @@ func TestHandleSignMessage_InvalidEncodingRejected(t *testing.T) {
 
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 	require.False(t, called)
+}
+
+func TestHandleWalletsAuthenticate_UserJWTMismatchRejected(t *testing.T) {
+	jwksServer := mocks.NewMockJWKSServer("https://issuer.example.com", "test-audience")
+	defer jwksServer.Close()
+
+	_, err := jwksServer.AddRSAKey("test-key-1")
+	require.NoError(t, err)
+
+	token, err := jwksServer.CreateValidJWT("user-other", nil)
+	require.NoError(t, err)
+
+	server := &Server{userAuthMiddleware: middleware.NewAuthMiddleware()}
+
+	app := &types.App{
+		Settings: types.AppSettings{
+			Auth: &types.AppAuthSettings{
+				Kind:     types.AuthKindOIDC,
+				Issuer:   jwksServer.Issuer(),
+				Audience: jwksServer.Audience(),
+				JWKSURI:  jwksServer.JWKSURI(),
+			},
+		},
+	}
+
+	body := map[string]any{
+		"user_jwt": token,
+	}
+	bodyBytes, err := json.Marshal(body)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/v1/wallets/authenticate", bytes.NewReader(bodyBytes))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.UserSubKey, "user-123"))
+	req = req.WithContext(context.WithValue(req.Context(), middleware.AppKey, app))
+	rec := httptest.NewRecorder()
+
+	server.handleWalletsAuthenticate(rec, req)
+
+	require.Equal(t, http.StatusForbidden, rec.Code)
 }

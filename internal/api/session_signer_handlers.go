@@ -177,11 +177,3 @@ func stringToBigIntPtr(s *string) *big.Int {
 	}
 	return bi
 }
-
-func stringPtrFromBigInt(bi *big.Int) *string {
-	if bi == nil {
-		return nil
-	}
-	v := bi.String()
-	return &v
-}

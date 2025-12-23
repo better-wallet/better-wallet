@@ -178,33 +178,25 @@ func (v *SignatureVerifier) VerifyOwnerSignature(
 // Owner represents a wallet or resource owner
 type Owner struct {
 	Type            OwnerType
-	PublicKey       string        // For single key owners
+	PublicKey       string         // For single key owners
 	QuorumKeys      []KeyQuorumKey // For key quorum owners
-	QuorumThreshold int           // For key quorum owners
+	QuorumThreshold int            // For key quorum owners
 }
 
 // OwnerType represents the type of owner
 type OwnerType string
 
 const (
-	OwnerTypeSingleKey  OwnerType = "single_key"
-	OwnerTypeKeyQuorum  OwnerType = "key_quorum"
-	OwnerTypeUser       OwnerType = "user"
+	OwnerTypeSingleKey OwnerType = "single_key"
+	OwnerTypeKeyQuorum OwnerType = "key_quorum"
+	OwnerTypeUser      OwnerType = "user"
 )
 
 // PublicKeyToPEM converts raw public key bytes to PEM format
 func PublicKeyToPEM(publicKeyBytes []byte) (string, error) {
-	// Parse the public key bytes
-	x, y := elliptic.Unmarshal(elliptic.P256(), publicKeyBytes)
-	if x == nil {
-		return "", fmt.Errorf("failed to unmarshal public key")
-	}
-
-	// Create ECDSA public key
-	pubKey := &ecdsa.PublicKey{
-		Curve: elliptic.P256(),
-		X:     x,
-		Y:     y,
+	pubKey, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), publicKeyBytes)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse public key: %w", err)
 	}
 
 	// Marshal to DER format

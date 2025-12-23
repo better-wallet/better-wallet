@@ -2,14 +2,19 @@ package middleware
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/better-wallet/better-wallet/internal/storage"
 	apperrors "github.com/better-wallet/better-wallet/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -314,4 +319,141 @@ func TestNewIdempotencyMiddleware(t *testing.T) {
 		middleware := NewIdempotencyMiddleware(nil)
 		require.NotNil(t, middleware)
 	})
+}
+
+type fakeIdempotencyRepo struct {
+	mu      sync.Mutex
+	records map[string]*storage.IdempotencyRecord
+}
+
+func newFakeIdempotencyRepo() *fakeIdempotencyRepo {
+	return &fakeIdempotencyRepo{
+		records: make(map[string]*storage.IdempotencyRecord),
+	}
+}
+
+func (f *fakeIdempotencyRepo) key(appID, key, method, url string) string {
+	return fmt.Sprintf("%s|%s|%s|%s", appID, key, method, url)
+}
+
+func (f *fakeIdempotencyRepo) Get(ctx context.Context, appID, key, method, url string) (*storage.IdempotencyRecord, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	rec, ok := f.records[f.key(appID, key, method, url)]
+	if !ok || time.Now().After(rec.ExpiresAt) {
+		return nil, fmt.Errorf("not found")
+	}
+
+	clone := *rec
+	clone.Body = append([]byte(nil), rec.Body...)
+	clone.Headers = make(http.Header)
+	for k, v := range rec.Headers {
+		clone.Headers[k] = append([]string(nil), v...)
+	}
+	return &clone, nil
+}
+
+func (f *fakeIdempotencyRepo) Store(ctx context.Context, record *storage.IdempotencyRecord) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	clone := *record
+	clone.Body = append([]byte(nil), record.Body...)
+	clone.Headers = make(http.Header)
+	for k, v := range record.Headers {
+		clone.Headers[k] = append([]string(nil), v...)
+	}
+	f.records[f.key(record.AppID, record.Key, record.Method, record.URL)] = &clone
+	return nil
+}
+
+func TestIdempotencyMiddleware_ReplaysCachedResponse(t *testing.T) {
+	repo := newFakeIdempotencyRepo()
+	middleware := NewIdempotencyMiddleware(repo)
+
+	callCount := 0
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"count":` + fmt.Sprint(callCount) + `}`))
+	})
+
+	req1 := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{"a":1}`))
+	req1.Header.Set("x-idempotency-key", "key-1")
+	req1.Header.Set("x-app-id", "app-1")
+	rec1 := httptest.NewRecorder()
+
+	middleware.Handle(handler).ServeHTTP(rec1, req1)
+	require.Equal(t, http.StatusCreated, rec1.Code)
+	require.Equal(t, 1, callCount)
+	require.Empty(t, rec1.Header().Get("X-Idempotency-Replay"))
+
+	req2 := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{"a":1}`))
+	req2.Header.Set("x-idempotency-key", "key-1")
+	req2.Header.Set("x-app-id", "app-1")
+	rec2 := httptest.NewRecorder()
+
+	middleware.Handle(handler).ServeHTTP(rec2, req2)
+	require.Equal(t, http.StatusCreated, rec2.Code)
+	require.Equal(t, 1, callCount, "handler should not be called on replay")
+	require.Equal(t, "true", rec2.Header().Get("X-Idempotency-Replay"))
+	require.Equal(t, rec1.Body.String(), rec2.Body.String())
+}
+
+func TestIdempotencyMiddleware_RejectsDifferentBodySameKey(t *testing.T) {
+	repo := newFakeIdempotencyRepo()
+	middleware := NewIdempotencyMiddleware(repo)
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+	})
+
+	req1 := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{"a":1}`))
+	req1.Header.Set("x-idempotency-key", "key-2")
+	req1.Header.Set("x-app-id", "app-1")
+	rec1 := httptest.NewRecorder()
+	middleware.Handle(handler).ServeHTTP(rec1, req1)
+	require.Equal(t, http.StatusOK, rec1.Code)
+
+	req2 := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{"a":2}`))
+	req2.Header.Set("x-idempotency-key", "key-2")
+	req2.Header.Set("x-app-id", "app-1")
+	rec2 := httptest.NewRecorder()
+	middleware.Handle(handler).ServeHTTP(rec2, req2)
+
+	require.Equal(t, http.StatusBadRequest, rec2.Code)
+	require.Contains(t, rec2.Body.String(), apperrors.ErrCodeIdempotencyKeyReused)
+}
+
+func TestIdempotencyMiddleware_ScopesKeyByUser(t *testing.T) {
+	repo := newFakeIdempotencyRepo()
+	middleware := NewIdempotencyMiddleware(repo)
+
+	callCount := 0
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req1 := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{"a":1}`))
+	req1.Header.Set("x-idempotency-key", "key-3")
+	req1.Header.Set("x-app-id", "app-1")
+	req1 = req1.WithContext(context.WithValue(req1.Context(), UserSubKey, "user-a"))
+	rec1 := httptest.NewRecorder()
+	middleware.Handle(handler).ServeHTTP(rec1, req1)
+	require.Equal(t, http.StatusOK, rec1.Code)
+
+	req2 := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{"a":2}`))
+	req2.Header.Set("x-idempotency-key", "key-3")
+	req2.Header.Set("x-app-id", "app-1")
+	req2 = req2.WithContext(context.WithValue(req2.Context(), UserSubKey, "user-b"))
+	rec2 := httptest.NewRecorder()
+	middleware.Handle(handler).ServeHTTP(rec2, req2)
+	require.Equal(t, http.StatusOK, rec2.Code)
+
+	require.Equal(t, 2, callCount, "different users should not conflict on idempotency key")
+	require.Empty(t, rec2.Header().Get("X-Idempotency-Replay"))
 }

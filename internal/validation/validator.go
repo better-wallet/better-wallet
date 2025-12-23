@@ -41,25 +41,6 @@ func ValidateChainID(chainID int64) error {
 		return fmt.Errorf("chain ID must be positive")
 	}
 
-	// Known chain IDs (extend as needed)
-	knownChains := map[int64]string{
-		1:     "Ethereum Mainnet",
-		5:     "Goerli",
-		11155111: "Sepolia",
-		137:   "Polygon",
-		42161: "Arbitrum One",
-		10:    "Optimism",
-		56:    "BSC",
-		43114: "Avalanche",
-		8453:  "Base",
-	}
-
-	// Warning for unknown chains (not an error, just informational)
-	if _, known := knownChains[chainID]; !known {
-		// Log warning but don't fail validation
-		// This allows support for new/custom chains
-	}
-
 	return nil
 }
 
@@ -145,8 +126,8 @@ func ValidateTransactionData(data []byte, maxDataSize int) error {
 
 // TransactionValidationConfig holds configuration for transaction validation
 type TransactionValidationConfig struct {
-	MaxValue       *big.Int // Maximum transaction value (nil = no limit)
-	MaxDataSize    int      // Maximum data size in bytes (0 = no limit)
+	MaxValue        *big.Int // Maximum transaction value (nil = no limit)
+	MaxDataSize     int      // Maximum data size in bytes (0 = no limit)
 	AllowedChainIDs []int64  // Allowed chain IDs (nil/empty = all allowed)
 }
 

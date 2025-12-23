@@ -55,8 +55,13 @@ func EncryptWithHPKE(plaintext []byte, recipientPublicKey []byte) ([]byte, []byt
 	// Get the KEM scheme for P-256
 	kemScheme := schemes.ByName("HPKE_KEM_P256_HKDF_SHA256")
 
-	// Marshal public key for KEM
-	pkBytes := elliptic.Marshal(ecdsaPub.Curve, ecdsaPub.X, ecdsaPub.Y)
+	ecdhPub, err := ecdsaPub.ECDH()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to convert public key: %w", err)
+	}
+
+	// Marshal public key for KEM (SEC 1 uncompressed encoding)
+	pkBytes := ecdhPub.Bytes()
 	recipientPk, err := kemScheme.UnmarshalBinaryPublicKey(pkBytes)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to unmarshal public key for KEM: %w", err)

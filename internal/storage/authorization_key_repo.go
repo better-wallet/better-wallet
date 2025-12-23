@@ -2,7 +2,9 @@ package storage
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
+	"strings"
 
 	"github.com/better-wallet/better-wallet/pkg/types"
 	"github.com/google/uuid"
@@ -35,11 +37,16 @@ func (r *AuthorizationKeyRepository) Create(ctx context.Context, key *types.Auth
 		RETURNING created_at
 	`
 
-	err := r.store.pool.QueryRow(
+	publicKeyHex, err := encodeAuthorizationKeyPublicKey(key.PublicKey)
+	if err != nil {
+		return fmt.Errorf("failed to encode authorization key public key: %w", err)
+	}
+
+	err = r.store.pool.QueryRow(
 		ctx,
 		query,
 		key.ID,
-		key.PublicKey,
+		publicKeyHex,
 		key.Algorithm,
 		key.OwnerEntity,
 		key.Status,
@@ -69,11 +76,16 @@ func (r *AuthorizationKeyRepository) CreateTx(ctx context.Context, tx DBTX, key 
 		RETURNING created_at
 	`
 
-	err := tx.QueryRow(
+	publicKeyHex, err := encodeAuthorizationKeyPublicKey(key.PublicKey)
+	if err != nil {
+		return fmt.Errorf("failed to encode authorization key public key: %w", err)
+	}
+
+	err = tx.QueryRow(
 		ctx,
 		query,
 		key.ID,
-		key.PublicKey,
+		publicKeyHex,
 		key.Algorithm,
 		key.OwnerEntity,
 		key.Status,
@@ -101,9 +113,10 @@ func (r *AuthorizationKeyRepository) GetByID(ctx context.Context, id uuid.UUID) 
 	`
 
 	key := &types.AuthorizationKey{}
+	var publicKeyHex string
 	err = r.store.pool.QueryRow(ctx, query, id, appID).Scan(
 		&key.ID,
-		&key.PublicKey,
+		&publicKeyHex,
 		&key.Algorithm,
 		&key.OwnerEntity,
 		&key.Status,
@@ -118,6 +131,11 @@ func (r *AuthorizationKeyRepository) GetByID(ctx context.Context, id uuid.UUID) 
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get authorization key: %w", err)
+	}
+
+	key.PublicKey, err = decodeAuthorizationKeyPublicKey(publicKeyHex)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode authorization key public key: %w", err)
 	}
 
 	return key, nil
@@ -132,9 +150,10 @@ func (r *AuthorizationKeyRepository) GetByIDAndAppID(ctx context.Context, id, ap
 	`
 
 	key := &types.AuthorizationKey{}
+	var publicKeyHex string
 	err := r.store.pool.QueryRow(ctx, query, id, appID).Scan(
 		&key.ID,
-		&key.PublicKey,
+		&publicKeyHex,
 		&key.Algorithm,
 		&key.OwnerEntity,
 		&key.Status,
@@ -149,6 +168,11 @@ func (r *AuthorizationKeyRepository) GetByIDAndAppID(ctx context.Context, id, ap
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get authorization key: %w", err)
+	}
+
+	key.PublicKey, err = decodeAuthorizationKeyPublicKey(publicKeyHex)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode authorization key public key: %w", err)
 	}
 
 	return key, nil
@@ -181,9 +205,10 @@ func (r *AuthorizationKeyRepository) GetActiveByOwnerEntityAndAppID(ctx context.
 	var keys []*types.AuthorizationKey
 	for rows.Next() {
 		key := &types.AuthorizationKey{}
+		var publicKeyHex string
 		if err := rows.Scan(
 			&key.ID,
-			&key.PublicKey,
+			&publicKeyHex,
 			&key.Algorithm,
 			&key.OwnerEntity,
 			&key.Status,
@@ -192,6 +217,10 @@ func (r *AuthorizationKeyRepository) GetActiveByOwnerEntityAndAppID(ctx context.
 			&key.RotatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan authorization key: %w", err)
+		}
+		key.PublicKey, err = decodeAuthorizationKeyPublicKey(publicKeyHex)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode authorization key public key: %w", err)
 		}
 		keys = append(keys, key)
 	}
@@ -221,9 +250,10 @@ func (r *AuthorizationKeyRepository) GetByAppID(ctx context.Context, appID uuid.
 	var keys []*types.AuthorizationKey
 	for rows.Next() {
 		key := &types.AuthorizationKey{}
+		var publicKeyHex string
 		if err := rows.Scan(
 			&key.ID,
-			&key.PublicKey,
+			&publicKeyHex,
 			&key.Algorithm,
 			&key.OwnerEntity,
 			&key.Status,
@@ -232,6 +262,10 @@ func (r *AuthorizationKeyRepository) GetByAppID(ctx context.Context, appID uuid.
 			&key.RotatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan authorization key: %w", err)
+		}
+		key.PublicKey, err = decodeAuthorizationKeyPublicKey(publicKeyHex)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode authorization key public key: %w", err)
 		}
 		keys = append(keys, key)
 	}
@@ -261,9 +295,10 @@ func (r *AuthorizationKeyRepository) GetActiveByAppID(ctx context.Context, appID
 	var keys []*types.AuthorizationKey
 	for rows.Next() {
 		key := &types.AuthorizationKey{}
+		var publicKeyHex string
 		if err := rows.Scan(
 			&key.ID,
-			&key.PublicKey,
+			&publicKeyHex,
 			&key.Algorithm,
 			&key.OwnerEntity,
 			&key.Status,
@@ -272,6 +307,10 @@ func (r *AuthorizationKeyRepository) GetActiveByAppID(ctx context.Context, appID
 			&key.RotatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan authorization key: %w", err)
+		}
+		key.PublicKey, err = decodeAuthorizationKeyPublicKey(publicKeyHex)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode authorization key public key: %w", err)
 		}
 		keys = append(keys, key)
 	}
@@ -316,4 +355,27 @@ func (r *AuthorizationKeyRepository) RotateKey(ctx context.Context, id uuid.UUID
 // RevokeKey marks a key as revoked
 func (r *AuthorizationKeyRepository) RevokeKey(ctx context.Context, id uuid.UUID) error {
 	return r.UpdateStatus(ctx, id, types.StatusRevoked)
+}
+
+func encodeAuthorizationKeyPublicKey(publicKey []byte) (string, error) {
+	if len(publicKey) == 0 {
+		return "", fmt.Errorf("public key is empty")
+	}
+	return hex.EncodeToString(publicKey), nil
+}
+
+func decodeAuthorizationKeyPublicKey(publicKeyHex string) ([]byte, error) {
+	publicKeyHex = strings.TrimSpace(publicKeyHex)
+	publicKeyHex = strings.TrimPrefix(publicKeyHex, "0x")
+	if publicKeyHex == "" {
+		return nil, fmt.Errorf("public key hex is empty")
+	}
+	if len(publicKeyHex)%2 != 0 {
+		return nil, fmt.Errorf("public key hex must have even length")
+	}
+	decoded, err := hex.DecodeString(publicKeyHex)
+	if err != nil {
+		return nil, fmt.Errorf("public key hex must be valid hex: %w", err)
+	}
+	return decoded, nil
 }

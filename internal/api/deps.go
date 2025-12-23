@@ -31,3 +31,8 @@ type WalletService interface {
 	DeleteSessionSigner(ctx context.Context, userSub string, walletID, signerID uuid.UUID) error
 }
 
+// AuthorizationKeyStore is the subset of authorization key storage used by the API
+// signature verification path. It enables handler-level unit tests without a database.
+type AuthorizationKeyStore interface {
+	GetActiveByAppID(ctx context.Context, appID uuid.UUID) ([]*types.AuthorizationKey, error)
+}

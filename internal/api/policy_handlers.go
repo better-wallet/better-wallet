@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -283,8 +284,21 @@ func (s *Server) handleCreatePolicy(w http.ResponseWriter, r *http.Request) {
 	// userSub is optional - nil for app-owned policies
 	userSub, hasUser := getUserSub(r.Context())
 
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeBadRequest,
+			"Failed to read request body",
+			err.Error(),
+			http.StatusBadRequest,
+		))
+		return
+	}
+	// Restore body so signature verification includes the original payload.
+	r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
 	var req CreatePolicyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(bodyBytes, &req); err != nil {
 		s.writeError(w, apperrors.NewWithDetail(
 			apperrors.ErrCodeBadRequest,
 			"Invalid request body",
@@ -813,58 +827,4 @@ func convertRulesToStorage(rules []PolicyRuleInput) map[string]interface{} {
 	return map[string]interface{}{
 		"rules": rulesList,
 	}
-}
-
-// convertStorageRulesToInput converts storage format back to PolicyRuleInput for updates
-func convertStorageRulesToInput(rules map[string]interface{}) []PolicyRuleInput {
-	rulesList, ok := rules["rules"].([]interface{})
-	if !ok {
-		return nil
-	}
-
-	result := make([]PolicyRuleInput, 0, len(rulesList))
-	for _, ruleInterface := range rulesList {
-		rule, ok := ruleInterface.(map[string]interface{})
-		if !ok {
-			continue
-		}
-
-		ruleInput := PolicyRuleInput{}
-		if name, ok := rule["name"].(string); ok {
-			ruleInput.Name = name
-		}
-		if method, ok := rule["method"].(string); ok {
-			ruleInput.Method = method
-		}
-		if action, ok := rule["action"].(string); ok {
-			ruleInput.Action = action
-		}
-
-		if conditions, ok := rule["conditions"].([]interface{}); ok {
-			for _, condInterface := range conditions {
-				cond, ok := condInterface.(map[string]interface{})
-				if !ok {
-					continue
-				}
-
-				condInput := PolicyConditionInput{}
-				if fieldSource, ok := cond["field_source"].(string); ok {
-					condInput.FieldSource = fieldSource
-				}
-				if field, ok := cond["field"].(string); ok {
-					condInput.Field = field
-				}
-				if operator, ok := cond["operator"].(string); ok {
-					condInput.Operator = operator
-				}
-				condInput.Value = cond["value"]
-
-				ruleInput.Conditions = append(ruleInput.Conditions, condInput)
-			}
-		}
-
-		result = append(result, ruleInput)
-	}
-
-	return result
 }

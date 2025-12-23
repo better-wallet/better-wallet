@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/elliptic"
 	"encoding/hex"
 	"encoding/json"
@@ -186,17 +187,9 @@ func (s *WalletService) CreateWallet(ctx context.Context, req *CreateWalletReque
 			return nil, fmt.Errorf("unsupported algorithm: %s (only 'p256' is supported)", req.OwnerAlgorithm)
 		}
 
-		// P-256: Validate format and ensure point is on curve
-		if len(publicKeyBytes) != 65 && len(publicKeyBytes) != 33 {
-			return nil, fmt.Errorf("invalid P-256 public key length: expected 65 (uncompressed) or 33 (compressed) bytes, got %d", len(publicKeyBytes))
-		}
-
-		x, y := elliptic.Unmarshal(elliptic.P256(), publicKeyBytes)
-		if x == nil {
-			return nil, fmt.Errorf("invalid P-256 public key format: failed to parse")
-		}
-		if !elliptic.P256().IsOnCurve(x, y) {
-			return nil, fmt.Errorf("invalid P-256 public key: point not on curve")
+		normalizedKey, err := normalizeP256PublicKeyBytes(publicKeyBytes)
+		if err != nil {
+			return nil, err
 		}
 
 		ownerEntity := req.UserSub
@@ -206,7 +199,7 @@ func (s *WalletService) CreateWallet(ctx context.Context, req *CreateWalletReque
 
 		authKey = &types.AuthorizationKey{
 			ID:          uuid.New(),
-			PublicKey:   publicKeyBytes,
+			PublicKey:   normalizedKey,
 			Algorithm:   req.OwnerAlgorithm,
 			OwnerEntity: ownerEntity,
 			Status:      types.StatusActive,
@@ -692,11 +685,12 @@ func (s *WalletService) CreateSessionSigner(ctx context.Context, req *CreateSess
 			400,
 		)
 	}
-	if x, y := elliptic.Unmarshal(elliptic.P256(), pubKeyBytes); x == nil || !elliptic.P256().IsOnCurve(x, y) {
+	normalizedKey, err := normalizeP256PublicKeyBytes(pubKeyBytes)
+	if err != nil {
 		return nil, nil, apperrors.NewWithDetail(
 			apperrors.ErrCodeBadRequest,
 			"Invalid signer public key",
-			"Point not on P-256 curve",
+			err.Error(),
 			400,
 		)
 	}
@@ -726,7 +720,7 @@ func (s *WalletService) CreateSessionSigner(ctx context.Context, req *CreateSess
 
 	authKey := &types.AuthorizationKey{
 		ID:          uuid.New(),
-		PublicKey:   pubKeyBytes,
+		PublicKey:   normalizedKey,
 		Algorithm:   types.AlgorithmP256,
 		OwnerEntity: req.UserSub,
 		Status:      types.StatusActive,
@@ -1941,4 +1935,32 @@ func (s *WalletService) loadConditionSetsForPolicies(ctx context.Context, polici
 	}
 
 	return result, nil
+}
+
+func normalizeP256PublicKeyBytes(publicKeyBytes []byte) ([]byte, error) {
+	switch len(publicKeyBytes) {
+	case 33:
+		x, y := elliptic.UnmarshalCompressed(elliptic.P256(), publicKeyBytes)
+		if x == nil {
+			return nil, fmt.Errorf("invalid P-256 compressed public key")
+		}
+		pub := &ecdsa.PublicKey{Curve: elliptic.P256(), X: x, Y: y}
+		ecdhPub, err := pub.ECDH()
+		if err != nil {
+			return nil, fmt.Errorf("invalid P-256 compressed public key: %w", err)
+		}
+		return ecdhPub.Bytes(), nil
+	case 65:
+		pub, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), publicKeyBytes)
+		if err != nil {
+			return nil, fmt.Errorf("invalid P-256 uncompressed public key: %w", err)
+		}
+		ecdhPub, err := pub.ECDH()
+		if err != nil {
+			return nil, fmt.Errorf("invalid P-256 public key: %w", err)
+		}
+		return ecdhPub.Bytes(), nil
+	default:
+		return nil, fmt.Errorf("invalid P-256 public key length: expected 65 (uncompressed) or 33 (compressed) bytes, got %d", len(publicKeyBytes))
+	}
 }

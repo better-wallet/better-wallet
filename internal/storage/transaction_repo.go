@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -61,6 +62,12 @@ func (r *TransactionRepository) Create(ctx context.Context, tx *Transaction) err
 		)
 	`
 
+	var signedTx *string
+	if len(tx.SignedTx) > 0 {
+		encoded := hex.EncodeToString(tx.SignedTx)
+		signedTx = &encoded
+	}
+
 	_, err := r.store.pool.Exec(ctx, query,
 		tx.ID,
 		tx.WalletID,
@@ -75,7 +82,7 @@ func (r *TransactionRepository) Create(ctx context.Context, tx *Transaction) err
 		tx.GasLimit,
 		tx.MaxFeePerGas,
 		tx.MaxPriorityFeePerGas,
-		tx.SignedTx,
+		signedTx,
 		tx.ErrorMessage,
 		tx.AppID,
 	)

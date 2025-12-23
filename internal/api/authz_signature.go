@@ -35,7 +35,19 @@ func (s *Server) verifyAppAuthorizationSignature(r *http.Request) error {
 		)
 	}
 
-	authKeyRepo := storage.NewAuthorizationKeyRepository(s.store)
+	authKeyRepo := s.authKeyStore
+	if authKeyRepo == nil {
+		if s.store == nil {
+			return apperrors.NewWithDetail(
+				apperrors.ErrCodeInternalError,
+				"Authorization key store not configured",
+				"server store is nil",
+				http.StatusInternalServerError,
+			)
+		}
+		authKeyRepo = storage.NewAuthorizationKeyRepository(s.store)
+	}
+
 	keys, err := authKeyRepo.GetActiveByAppID(r.Context(), appID)
 	if err != nil {
 		return apperrors.NewWithDetail(

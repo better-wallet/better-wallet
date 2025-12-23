@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/ecdsa"
 	"crypto/elliptic"
 	"encoding/hex"
 	"encoding/json"
@@ -219,10 +220,11 @@ func (s *Server) handleListAuthorizationKeys(w http.ResponseWriter, r *http.Requ
 	var keys []AuthorizationKeyResponse
 	for rows.Next() {
 		var key types.AuthorizationKey
+		var publicKeyHex string
 
 		err := rows.Scan(
 			&key.ID,
-			&key.PublicKey,
+			&publicKeyHex,
 			&key.Algorithm,
 			&key.OwnerEntity,
 			&key.Status,
@@ -232,6 +234,12 @@ func (s *Server) handleListAuthorizationKeys(w http.ResponseWriter, r *http.Requ
 		if err != nil {
 			continue
 		}
+
+		publicKeyBytes, err := decodeHexPublicKey(publicKeyHex)
+		if err != nil {
+			continue
+		}
+		key.PublicKey = publicKeyBytes
 
 		keys = append(keys, convertAuthorizationKeyToResponse(&key))
 	}
@@ -487,16 +495,27 @@ func decodeHexPublicKey(hexKey string) ([]byte, error) {
 	// Validate P-256 public key.
 	switch len(publicKeyBytes) {
 	case 33:
-		if x, _ := elliptic.UnmarshalCompressed(elliptic.P256(), publicKeyBytes); x == nil {
+		x, y := elliptic.UnmarshalCompressed(elliptic.P256(), publicKeyBytes)
+		if x == nil {
 			return nil, fmt.Errorf("invalid P-256 compressed public key")
 		}
-	case 65:
-		if x, _ := elliptic.Unmarshal(elliptic.P256(), publicKeyBytes); x == nil {
-			return nil, fmt.Errorf("invalid P-256 uncompressed public key")
+		pub := &ecdsa.PublicKey{Curve: elliptic.P256(), X: x, Y: y}
+		ecdhPub, err := pub.ECDH()
+		if err != nil {
+			return nil, fmt.Errorf("invalid P-256 compressed public key: %w", err)
 		}
+		return ecdhPub.Bytes(), nil
+	case 65:
+		pub, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), publicKeyBytes)
+		if err != nil {
+			return nil, fmt.Errorf("invalid P-256 uncompressed public key: %w", err)
+		}
+		ecdhPub, err := pub.ECDH()
+		if err != nil {
+			return nil, fmt.Errorf("invalid P-256 public key: %w", err)
+		}
+		return ecdhPub.Bytes(), nil
 	default:
 		return nil, fmt.Errorf("invalid public key length: expected 33 (compressed) or 65 (uncompressed) bytes, got %d", len(publicKeyBytes))
 	}
-
-	return publicKeyBytes, nil
 }

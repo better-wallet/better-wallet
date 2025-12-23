@@ -231,8 +231,9 @@ func TestPublicKeyToPEM(t *testing.T) {
 		privKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		require.NoError(t, err)
 
-		// Marshal public key to raw bytes (65 bytes for uncompressed P-256)
-		rawPubKey := elliptic.Marshal(privKey.PublicKey.Curve, privKey.PublicKey.X, privKey.PublicKey.Y)
+		ecdhPub, err := privKey.PublicKey.ECDH()
+		require.NoError(t, err)
+		rawPubKey := ecdhPub.Bytes()
 
 		// Convert to PEM
 		pemKey, err := PublicKeyToPEM(rawPubKey)
@@ -253,7 +254,7 @@ func TestPublicKeyToPEM(t *testing.T) {
 
 		_, err := PublicKeyToPEM(invalidKey)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to unmarshal public key")
+		assert.Contains(t, err.Error(), "failed to parse public key")
 	})
 
 	t.Run("returns error for truncated key", func(t *testing.T) {

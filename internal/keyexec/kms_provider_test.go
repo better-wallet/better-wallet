@@ -154,21 +154,21 @@ func TestNewVaultProvider(t *testing.T) {
 		provider, err := NewVaultProvider("", "token", "key")
 		assert.Error(t, err)
 		assert.Nil(t, provider)
-		assert.Contains(t, err.Error(), "Vault address is required")
+		assert.Contains(t, err.Error(), "vault address is required")
 	})
 
 	t.Run("returns error with empty token", func(t *testing.T) {
 		provider, err := NewVaultProvider("http://localhost:8200", "", "key")
 		assert.Error(t, err)
 		assert.Nil(t, provider)
-		assert.Contains(t, err.Error(), "Vault token is required")
+		assert.Contains(t, err.Error(), "vault token is required")
 	})
 
 	t.Run("returns error with empty transit key", func(t *testing.T) {
 		provider, err := NewVaultProvider("http://localhost:8200", "token", "")
 		assert.Error(t, err)
 		assert.Nil(t, provider)
-		assert.Contains(t, err.Error(), "Vault transit key name is required")
+		assert.Contains(t, err.Error(), "vault transit key name is required")
 	})
 
 	// Note: Full Vault testing requires a running Vault server and is typically
@@ -218,7 +218,7 @@ func TestNewKMSProvider(t *testing.T) {
 
 		_, err := NewKMSProvider(cfg)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "Vault address is required")
+		assert.Contains(t, err.Error(), "vault address is required")
 	})
 
 	t.Run("returns error for unsupported provider", func(t *testing.T) {

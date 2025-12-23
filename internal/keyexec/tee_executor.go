@@ -2,7 +2,6 @@ package keyexec
 
 import (
 	"context"
-	"crypto/ecdsa"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -53,9 +52,6 @@ type TEEExecutor struct {
 
 	// masterKey for encrypting shares stored in database
 	masterKey []byte
-
-	// attestationDoc is the enclave's attestation document (for verification)
-	attestationDoc []byte
 }
 
 // TEEConfig contains configuration for the TEE executor
@@ -272,7 +268,6 @@ func (t *TEEExecutor) Decrypt(ctx context.Context, encryptedData []byte) ([]byte
 	return decryptAESGCM(t.masterKey, encryptedData)
 }
 
-
 // callEnclave sends a request to the enclave and returns the response
 func (t *TEEExecutor) callEnclave(ctx context.Context, req *EnclaveRequest) (*EnclaveResponse, error) {
 	// Create connection to enclave using platform-specific dialer
@@ -360,13 +355,6 @@ type TEEKeyMaterial struct {
 	// SealedExecShare is the exec_share sealed by the enclave's attestation key
 	// This can only be unsealed by the same enclave
 	SealedExecShare []byte
-}
-
-// zeroKey securely zeros out the private key from memory
-func (t *TEEExecutor) zeroKey(privateKey *ecdsa.PrivateKey) {
-	if privateKey != nil && privateKey.D != nil {
-		privateKey.D.SetInt64(0)
-	}
 }
 
 // Ensure TEEExecutor implements KeyExecutor

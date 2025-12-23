@@ -62,8 +62,8 @@ type KMSConfig struct {
 	AWSKMSRegion string
 
 	// Vault config
-	VaultAddress   string
-	VaultToken     string
+	VaultAddress    string
+	VaultToken      string
 	VaultTransitKey string
 }
 
@@ -211,13 +211,13 @@ type VaultProvider struct {
 // NewVaultProvider creates a new Vault provider
 func NewVaultProvider(address, token, transitKey string) (*VaultProvider, error) {
 	if address == "" {
-		return nil, fmt.Errorf("Vault address is required")
+		return nil, fmt.Errorf("vault address is required")
 	}
 	if token == "" {
-		return nil, fmt.Errorf("Vault token is required")
+		return nil, fmt.Errorf("vault token is required")
 	}
 	if transitKey == "" {
-		return nil, fmt.Errorf("Vault transit key name is required")
+		return nil, fmt.Errorf("vault transit key name is required")
 	}
 
 	// Initialize Vault client
@@ -247,16 +247,16 @@ func (p *VaultProvider) Encrypt(ctx context.Context, data []byte) ([]byte, error
 		"plaintext": plaintext,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("Vault Transit encrypt failed: %w", err)
+		return nil, fmt.Errorf("vault transit encrypt failed: %w", err)
 	}
 
 	if secret == nil || secret.Data == nil {
-		return nil, fmt.Errorf("Vault Transit encrypt returned empty response")
+		return nil, fmt.Errorf("vault transit encrypt returned empty response")
 	}
 
 	ciphertext, ok := secret.Data["ciphertext"].(string)
 	if !ok {
-		return nil, fmt.Errorf("Vault Transit encrypt: ciphertext not found in response")
+		return nil, fmt.Errorf("vault transit encrypt: ciphertext not found in response")
 	}
 
 	// Return ciphertext as bytes (it's a vault:v1:... string)
@@ -270,22 +270,22 @@ func (p *VaultProvider) Decrypt(ctx context.Context, encryptedData []byte) ([]by
 		"ciphertext": string(encryptedData),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("Vault Transit decrypt failed: %w", err)
+		return nil, fmt.Errorf("vault transit decrypt failed: %w", err)
 	}
 
 	if secret == nil || secret.Data == nil {
-		return nil, fmt.Errorf("Vault Transit decrypt returned empty response")
+		return nil, fmt.Errorf("vault transit decrypt returned empty response")
 	}
 
 	plaintextB64, ok := secret.Data["plaintext"].(string)
 	if !ok {
-		return nil, fmt.Errorf("Vault Transit decrypt: plaintext not found in response")
+		return nil, fmt.Errorf("vault transit decrypt: plaintext not found in response")
 	}
 
 	// Decode base64 plaintext
 	plaintext, err := base64.StdEncoding.DecodeString(plaintextB64)
 	if err != nil {
-		return nil, fmt.Errorf("Vault Transit decrypt: failed to decode plaintext: %w", err)
+		return nil, fmt.Errorf("vault transit decrypt: failed to decode plaintext: %w", err)
 	}
 
 	return plaintext, nil
