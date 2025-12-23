@@ -12,19 +12,34 @@ Once a session signer is created, the signer key can authorize transactions on b
 
 ### Basic Transaction Signing
 
+All signing operations use the unified `/rpc` endpoint with JSON-RPC 2.0 format:
+
 ```bash
 # Generate signature with session signer's key
 IDEMPOTENCY_KEY=$(uuidgen)
-BODY='{"to":"0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb","value":"1000000000000000000","chain_id":1}'
+BODY='{
+  "jsonrpc": "2.0",
+  "method": "eth_sendTransaction",
+  "params": [{
+    "to": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+    "value": "0xde0b6b3a7640000",
+    "chain_id": 1,
+    "nonce": "0x0",
+    "gas_limit": "0x5208",
+    "max_fee_per_gas": "0x6fc23ac00",
+    "max_priority_fee_per_gas": "0x77359400"
+  }],
+  "id": 1
+}'
 CANONICAL_BODY=$(echo $BODY | jq -Sc '.')
 
-PAYLOAD="1.0POST/v1/wallets/${WALLET_ID}/sign-transaction${CANONICAL_BODY}${APP_ID}${IDEMPOTENCY_KEY}"
+PAYLOAD="1.0POST/v1/wallets/${WALLET_ID}/rpc${CANONICAL_BODY}${APP_ID}${IDEMPOTENCY_KEY}"
 
 # Sign with SESSION SIGNER's key (not owner's key)
 SIGNATURE=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -sign signer_key.pem | base64)
 
 # Submit transaction
-curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/sign-transaction" \
+curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/rpc" \
   -H "X-App-Id: $APP_ID" \
   -H "X-App-Secret: $APP_SECRET" \
   -H "Authorization: Bearer $JWT" \
@@ -39,8 +54,12 @@ curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/sign-transaction" \
 
 ```json
 {
-  "signed_transaction": "0x02f87001...",
-  "transaction_hash": "0xabc123..."
+  "jsonrpc": "2.0",
+  "result": {
+    "signed_transaction": "0x02f87001...",
+    "tx_hash": "0xabc123..."
+  },
+  "id": 1
 }
 ```
 
@@ -94,26 +113,47 @@ Session Signer Request
 
 ## Operations Available to Session Signers
 
-### Transaction Signing
+All signing operations use the unified `/rpc` endpoint with JSON-RPC 2.0 format:
 
 ```bash
-POST /v1/wallets/{wallet_id}/sign-transaction
+POST /v1/wallets/{wallet_id}/rpc
+```
+
+### Transaction Signing
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "eth_sendTransaction",
+  "params": [{ ... }],
+  "id": 1
+}
 ```
 
 Session signers can sign transactions within their configured limits.
 
 ### Message Signing
 
-```bash
-POST /v1/wallets/{wallet_id}/sign-message
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "personal_sign",
+  "params": [{ "message": "..." }],
+  "id": 1
+}
 ```
 
 Sign personal messages (EIP-191) if policy allows.
 
 ### Typed Data Signing
 
-```bash
-POST /v1/wallets/{wallet_id}/sign-typed-data
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "eth_signTypedData_v4",
+  "params": [{ "typed_data": { ... } }],
+  "id": 1
+}
 ```
 
 Sign EIP-712 typed data (permits, orders) if policy allows.
@@ -230,25 +270,34 @@ class SessionSigner {
     this.apiConfig = apiConfig;
   }
 
-  async signTransaction(to, value, chainId, data = '0x') {
+  async signTransaction(to, value, chainId, nonce, gasLimit, maxFeePerGas, maxPriorityFeePerGas, data = '0x') {
     const idempotencyKey = crypto.randomUUID();
 
-    const body = {
-      to,
-      value: value.toString(),
-      chain_id: chainId,
-      data,
+    const rpcBody = {
+      jsonrpc: '2.0',
+      method: 'eth_sendTransaction',
+      params: [{
+        to,
+        value,
+        chain_id: chainId,
+        nonce,
+        gas_limit: gasLimit,
+        max_fee_per_gas: maxFeePerGas,
+        max_priority_fee_per_gas: maxPriorityFeePerGas,
+        data,
+      }],
+      id: 1,
     };
 
-    const canonicalBody = JSON.stringify(body, Object.keys(body).sort());
-    const payload = `1.0POST/v1/wallets/${this.walletId}/sign-transaction${canonicalBody}${this.apiConfig.appId}${idempotencyKey}`;
+    const canonicalBody = JSON.stringify(rpcBody, Object.keys(rpcBody).sort());
+    const payload = `1.0POST/v1/wallets/${this.walletId}/rpc${canonicalBody}${this.apiConfig.appId}${idempotencyKey}`;
 
     const sign = crypto.createSign('SHA256');
     sign.update(payload);
     const signature = sign.sign(this.privateKey, 'base64');
 
     const response = await fetch(
-      `${this.apiConfig.baseUrl}/v1/wallets/${this.walletId}/sign-transaction`,
+      `${this.apiConfig.baseUrl}/v1/wallets/${this.walletId}/rpc`,
       {
         method: 'POST',
         headers: {
@@ -260,7 +309,7 @@ class SessionSigner {
           'X-Idempotency-Key': idempotencyKey,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(body),
+        body: JSON.stringify(rpcBody),
       }
     );
 
@@ -275,16 +324,21 @@ class SessionSigner {
   async signMessage(message) {
     const idempotencyKey = crypto.randomUUID();
 
-    const body = { message };
-    const canonicalBody = JSON.stringify(body);
-    const payload = `1.0POST/v1/wallets/${this.walletId}/sign-message${canonicalBody}${this.apiConfig.appId}${idempotencyKey}`;
+    const rpcBody = {
+      jsonrpc: '2.0',
+      method: 'personal_sign',
+      params: [{ message }],
+      id: 1,
+    };
+    const canonicalBody = JSON.stringify(rpcBody);
+    const payload = `1.0POST/v1/wallets/${this.walletId}/rpc${canonicalBody}${this.apiConfig.appId}${idempotencyKey}`;
 
     const sign = crypto.createSign('SHA256');
     sign.update(payload);
     const signature = sign.sign(this.privateKey, 'base64');
 
     const response = await fetch(
-      `${this.apiConfig.baseUrl}/v1/wallets/${this.walletId}/sign-message`,
+      `${this.apiConfig.baseUrl}/v1/wallets/${this.walletId}/rpc`,
       {
         method: 'POST',
         headers: {
@@ -296,7 +350,7 @@ class SessionSigner {
           'X-Idempotency-Key': idempotencyKey,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(body),
+        body: JSON.stringify(rpcBody),
       }
     );
 
@@ -324,8 +378,12 @@ const signer = new SessionSigner(
 
 const result = await signer.signTransaction(
   '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb',
-  '1000000000000000000',  // 1 ETH
-  1  // mainnet
+  '0xde0b6b3a7640000',  // 1 ETH in hex
+  1,  // mainnet
+  '0x0',  // nonce
+  '0x5208',  // gas limit (21000)
+  '0x6fc23ac00',  // max fee per gas
+  '0x77359400'  // max priority fee per gas
 );
 ```
 

@@ -10,9 +10,7 @@ Complete reference for wallet management endpoints.
 | GET | `/v1/wallets` | List wallets |
 | GET | `/v1/wallets/{id}` | Get wallet details |
 | DELETE | `/v1/wallets/{id}` | Delete a wallet |
-| POST | `/v1/wallets/{id}/sign` | Sign a transaction |
-| POST | `/v1/wallets/{id}/sign-message` | Sign a personal message |
-| POST | `/v1/wallets/{id}/sign-typed-data` | Sign EIP-712 typed data |
+| POST | `/v1/wallets/{id}/rpc` | JSON-RPC endpoint for signing |
 | POST | `/v1/wallets/{id}/policies` | Attach a policy |
 | DELETE | `/v1/wallets/{id}/policies/{policy_id}` | Detach a policy |
 
@@ -216,137 +214,126 @@ curl -X DELETE "http://localhost:8080/v1/wallets/$WALLET_ID" \
 
 ---
 
-## Sign Transaction
+## JSON-RPC Endpoint
 
-Sign an Ethereum transaction.
+All signing operations use the unified `/rpc` endpoint with JSON-RPC 2.0 format.
 
 ### Request
 
 ```
-POST /v1/wallets/{id}/sign
+POST /v1/wallets/{id}/rpc
 ```
+
+### Supported Methods
+
+| Method | Description |
+|--------|-------------|
+| `eth_sendTransaction` | Sign and optionally broadcast transaction |
+| `eth_signTransaction` | Sign transaction (returns signed tx only) |
+| `eth_signTypedData_v4` | Sign EIP-712 typed data |
+| `personal_sign` | Sign personal message (EIP-191) |
+
+---
+
+## eth_sendTransaction
+
+Sign an Ethereum transaction.
 
 ### Body
 
 ```json
 {
-  "to": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
-  "value": "1000000000000000000",
-  "chain_id": 1,
-  "nonce": 0,
-  "gas_limit": 21000,
-  "gas_fee_cap": "30000000000",
-  "gas_tip_cap": "2000000000",
-  "data": ""
+  "jsonrpc": "2.0",
+  "method": "eth_sendTransaction",
+  "params": [{
+    "to": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+    "value": "0xde0b6b3a7640000",
+    "chain_id": 1,
+    "nonce": "0x0",
+    "gas_limit": "0x5208",
+    "max_fee_per_gas": "0x6fc23ac00",
+    "max_priority_fee_per_gas": "0x77359400",
+    "data": "0x"
+  }],
+  "id": 1
 }
 ```
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `to` | string | Yes | Recipient address |
-| `value` | string | Yes | Amount in wei |
+| `value` | string | Yes | Amount in wei (0x hex or decimal) |
 | `chain_id` | integer | Yes | Network chain ID |
-| `nonce` | integer | Yes | Transaction nonce |
-| `gas_limit` | integer | Yes | Gas limit |
-| `gas_fee_cap` | string | Yes* | Max fee per gas (EIP-1559) |
-| `gas_tip_cap` | string | Yes* | Priority fee (EIP-1559) |
+| `nonce` | string | Yes | Transaction nonce (0x hex or decimal) |
+| `gas_limit` | string | Yes | Gas limit (0x hex or decimal) |
+| `max_fee_per_gas` | string | Yes* | Max fee per gas (EIP-1559) |
+| `max_priority_fee_per_gas` | string | Yes* | Priority fee (EIP-1559) |
 | `gas_price` | string | Yes* | Gas price (legacy) |
 | `data` | string | No | Contract call data |
 
-*Either `gas_fee_cap`+`gas_tip_cap` or `gas_price`
+*Either `max_fee_per_gas`+`max_priority_fee_per_gas` or `gas_price`
 
 ### Response
 
 ```json
 {
-  "signed_transaction": "0x02f87001808477359400850708d7c00082520894...",
-  "tx_hash": "0xabc123def456789..."
+  "jsonrpc": "2.0",
+  "result": {
+    "signed_transaction": "0x02f87001808477359400850708d7c00082520894...",
+    "tx_hash": "0xabc123def456789..."
+  },
+  "id": 1
 }
 ```
 
 ### Example
 
 ```bash
-curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/sign" \
+curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/rpc" \
   -H "X-App-Id: $APP_ID" \
   -H "X-App-Secret: $APP_SECRET" \
   -H "Authorization: Bearer $JWT" \
   -H "Content-Type: application/json" \
   -d '{
-    "to": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
-    "value": "1000000000000000000",
-    "chain_id": 1,
-    "nonce": 0,
-    "gas_limit": 21000,
-    "gas_fee_cap": "30000000000",
-    "gas_tip_cap": "2000000000"
+    "jsonrpc": "2.0",
+    "method": "eth_sendTransaction",
+    "params": [{
+      "to": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+      "value": "0xde0b6b3a7640000",
+      "chain_id": 1,
+      "nonce": "0x0",
+      "gas_limit": "0x5208",
+      "max_fee_per_gas": "0x6fc23ac00",
+      "max_priority_fee_per_gas": "0x77359400"
+    }],
+    "id": 1
   }'
 ```
 
 ---
 
-## Sign Personal Message
-
-Sign a personal message (EIP-191).
-
-### Request
-
-```
-POST /v1/wallets/{id}/sign-message
-```
-
-### Body
-
-```json
-{
-  "message": "Hello, World!"
-}
-```
-
-### Response
-
-```json
-{
-  "signature": "0x..."
-}
-```
-
-### Example
-
-```bash
-curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/sign-message" \
-  -H "X-App-Id: $APP_ID" \
-  -H "X-App-Secret: $APP_SECRET" \
-  -H "Authorization: Bearer $JWT" \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Sign in to MyApp"}'
-```
-
----
-
-## Sign Typed Data
+## eth_signTypedData_v4
 
 Sign EIP-712 structured data.
 
-### Request
-
-```
-POST /v1/wallets/{id}/sign-typed-data
-```
-
 ### Body
 
 ```json
 {
-  "typed_data": {
-    "types": {
-      "EIP712Domain": [...],
-      "Permit": [...]
-    },
-    "primaryType": "Permit",
-    "domain": {...},
-    "message": {...}
-  }
+  "jsonrpc": "2.0",
+  "method": "eth_signTypedData_v4",
+  "params": [{
+    "typed_data": {
+      "types": {
+        "EIP712Domain": [...],
+        "Permit": [...]
+      },
+      "primaryType": "Permit",
+      "domain": {...},
+      "message": {...}
+    }
+  }],
+  "id": 1
 }
 ```
 
@@ -354,7 +341,11 @@ POST /v1/wallets/{id}/sign-typed-data
 
 ```json
 {
-  "signature": "0x..."
+  "jsonrpc": "2.0",
+  "result": {
+    "signature": "0x..."
+  },
+  "id": 1
 }
 ```
 

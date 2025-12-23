@@ -23,6 +23,44 @@ type RPCRequest struct {
 	Params json.RawMessage `json:"params"`
 }
 
+// parseHexBigInt parses a hex string (with or without 0x prefix) into a big.Int
+// Also accepts decimal strings for backward compatibility
+// Returns error with clear message if parsing fails
+func parseHexBigInt(s string) (*big.Int, error) {
+	if s == "" {
+		return new(big.Int), nil
+	}
+
+	// Try 0x hex first (preferred format per Ethereum JSON-RPC spec)
+	if strings.HasPrefix(s, "0x") || strings.HasPrefix(s, "0X") {
+		v := new(big.Int)
+		if _, ok := v.SetString(s[2:], 16); ok {
+			return v, nil
+		}
+		return nil, fmt.Errorf("invalid hex value: %s", s)
+	}
+
+	// Fallback: try decimal (for backward compatibility)
+	v := new(big.Int)
+	if _, ok := v.SetString(s, 10); ok {
+		return v, nil
+	}
+
+	return nil, fmt.Errorf("invalid value (expected 0x hex or decimal): %s", s)
+}
+
+// parseHexUint64 parses a hex string into uint64
+func parseHexUint64(s string) (uint64, error) {
+	v, err := parseHexBigInt(s)
+	if err != nil {
+		return 0, err
+	}
+	if !v.IsUint64() {
+		return 0, fmt.Errorf("value too large for uint64: %s", s)
+	}
+	return v.Uint64(), nil
+}
+
 // RPCResponse represents a unified RPC response
 type RPCResponse struct {
 	Method string      `json:"method"`
@@ -161,13 +199,13 @@ func (s *Server) handleEthSendTransaction(
 		return
 	}
 
-	// Parse transaction parameters
-	value, ok := new(big.Int).SetString(p.Transaction.Value, 0)
-	if !ok {
+	// Parse transaction parameters using hex parsing (0x preferred, decimal accepted)
+	value, err := parseHexBigInt(p.Transaction.Value)
+	if err != nil {
 		s.writeError(w, apperrors.NewWithDetail(
 			apperrors.ErrCodeBadRequest,
 			"Invalid value",
-			"Value must be a valid integer",
+			err.Error(),
 			http.StatusBadRequest,
 		))
 		return
@@ -176,53 +214,53 @@ func (s *Server) handleEthSendTransaction(
 	// Parse nonce
 	var nonce uint64
 	if p.Transaction.Nonce != "" {
-		n, ok := new(big.Int).SetString(p.Transaction.Nonce, 0)
-		if !ok {
+		nonce, err = parseHexUint64(p.Transaction.Nonce)
+		if err != nil {
 			s.writeError(w, apperrors.NewWithDetail(
 				apperrors.ErrCodeBadRequest,
 				"Invalid nonce",
-				"",
+				err.Error(),
 				http.StatusBadRequest,
 			))
 			return
 		}
-		nonce = n.Uint64()
 	}
 
 	// Parse gas limit
 	var gasLimit uint64 = 21000 // Default
 	if p.Transaction.GasLimit != "" {
-		gl, ok := new(big.Int).SetString(p.Transaction.GasLimit, 0)
-		if !ok {
+		gasLimit, err = parseHexUint64(p.Transaction.GasLimit)
+		if err != nil {
 			s.writeError(w, apperrors.NewWithDetail(
 				apperrors.ErrCodeBadRequest,
 				"Invalid gas_limit",
-				"",
+				err.Error(),
 				http.StatusBadRequest,
 			))
 			return
 		}
-		gasLimit = gl.Uint64()
 	}
 
 	// Parse gas parameters
 	gasFeeCap := new(big.Int)
 	if p.Transaction.MaxFeePerGas != "" {
-		if _, ok := gasFeeCap.SetString(p.Transaction.MaxFeePerGas, 0); !ok {
+		gasFeeCap, err = parseHexBigInt(p.Transaction.MaxFeePerGas)
+		if err != nil {
 			s.writeError(w, apperrors.NewWithDetail(
 				apperrors.ErrCodeBadRequest,
 				"Invalid max_fee_per_gas",
-				"",
+				err.Error(),
 				http.StatusBadRequest,
 			))
 			return
 		}
 	} else if p.Transaction.GasPrice != "" {
-		if _, ok := gasFeeCap.SetString(p.Transaction.GasPrice, 0); !ok {
+		gasFeeCap, err = parseHexBigInt(p.Transaction.GasPrice)
+		if err != nil {
 			s.writeError(w, apperrors.NewWithDetail(
 				apperrors.ErrCodeBadRequest,
 				"Invalid gas_price",
-				"",
+				err.Error(),
 				http.StatusBadRequest,
 			))
 			return
@@ -231,11 +269,12 @@ func (s *Server) handleEthSendTransaction(
 
 	gasTipCap := new(big.Int)
 	if p.Transaction.MaxPriorityFeePerGas != "" {
-		if _, ok := gasTipCap.SetString(p.Transaction.MaxPriorityFeePerGas, 0); !ok {
+		gasTipCap, err = parseHexBigInt(p.Transaction.MaxPriorityFeePerGas)
+		if err != nil {
 			s.writeError(w, apperrors.NewWithDetail(
 				apperrors.ErrCodeBadRequest,
 				"Invalid max_priority_fee_per_gas",
-				"",
+				err.Error(),
 				http.StatusBadRequest,
 			))
 			return
@@ -375,13 +414,13 @@ func (s *Server) handleEthSignTransaction(
 		return
 	}
 
-	// Parse transaction parameters (similar to eth_sendTransaction)
-	value, ok := new(big.Int).SetString(p.Transaction.Value, 0)
-	if !ok {
+	// Parse transaction parameters using hex parsing (0x preferred, decimal accepted)
+	value, err := parseHexBigInt(p.Transaction.Value)
+	if err != nil {
 		s.writeError(w, apperrors.NewWithDetail(
 			apperrors.ErrCodeBadRequest,
 			"Invalid value",
-			"",
+			err.Error(),
 			http.StatusBadRequest,
 		))
 		return
@@ -389,36 +428,59 @@ func (s *Server) handleEthSignTransaction(
 
 	var nonce uint64
 	if p.Transaction.Nonce != "" {
-		n, ok := new(big.Int).SetString(p.Transaction.Nonce, 0)
-		if !ok {
+		nonce, err = parseHexUint64(p.Transaction.Nonce)
+		if err != nil {
 			s.writeError(w, apperrors.NewWithDetail(
 				apperrors.ErrCodeBadRequest,
 				"Invalid nonce",
-				"",
+				err.Error(),
 				http.StatusBadRequest,
 			))
 			return
 		}
-		nonce = n.Uint64()
 	}
 
 	var gasLimit uint64 = 21000
 	if p.Transaction.GasLimit != "" {
-		gl, ok := new(big.Int).SetString(p.Transaction.GasLimit, 0)
-		if !ok {
+		gasLimit, err = parseHexUint64(p.Transaction.GasLimit)
+		if err != nil {
 			s.writeError(w, apperrors.NewWithDetail(
 				apperrors.ErrCodeBadRequest,
 				"Invalid gas_limit",
-				"",
+				err.Error(),
 				http.StatusBadRequest,
 			))
 			return
 		}
-		gasLimit = gl.Uint64()
 	}
 
-	gasFeeCap, _ := new(big.Int).SetString(p.Transaction.MaxFeePerGas, 0)
-	gasTipCap, _ := new(big.Int).SetString(p.Transaction.MaxPriorityFeePerGas, 0)
+	gasFeeCap := new(big.Int)
+	if p.Transaction.MaxFeePerGas != "" {
+		gasFeeCap, err = parseHexBigInt(p.Transaction.MaxFeePerGas)
+		if err != nil {
+			s.writeError(w, apperrors.NewWithDetail(
+				apperrors.ErrCodeBadRequest,
+				"Invalid max_fee_per_gas",
+				err.Error(),
+				http.StatusBadRequest,
+			))
+			return
+		}
+	}
+
+	gasTipCap := new(big.Int)
+	if p.Transaction.MaxPriorityFeePerGas != "" {
+		gasTipCap, err = parseHexBigInt(p.Transaction.MaxPriorityFeePerGas)
+		if err != nil {
+			s.writeError(w, apperrors.NewWithDetail(
+				apperrors.ErrCodeBadRequest,
+				"Invalid max_priority_fee_per_gas",
+				err.Error(),
+				http.StatusBadRequest,
+			))
+			return
+		}
+	}
 
 	var data []byte
 	if p.Transaction.Data != "" {

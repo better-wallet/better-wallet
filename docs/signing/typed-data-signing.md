@@ -15,40 +15,47 @@ EIP-712 typed data signing provides:
 
 ## Basic Typed Data Signing
 
+All signing operations use the unified `/rpc` endpoint with JSON-RPC 2.0 format.
+
 ### Request
 
 ```bash
-curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/sign-typed-data" \
+curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/rpc" \
   -H "X-App-Id: $APP_ID" \
   -H "X-App-Secret: $APP_SECRET" \
   -H "Authorization: Bearer $JWT" \
   -H "Content-Type: application/json" \
   -d '{
-    "typed_data": {
-      "types": {
-        "EIP712Domain": [
-          {"name": "name", "type": "string"},
-          {"name": "version", "type": "string"},
-          {"name": "chainId", "type": "uint256"},
-          {"name": "verifyingContract", "type": "address"}
-        ],
-        "Message": [
-          {"name": "content", "type": "string"},
-          {"name": "timestamp", "type": "uint256"}
-        ]
-      },
-      "primaryType": "Message",
-      "domain": {
-        "name": "My App",
-        "version": "1",
-        "chainId": 1,
-        "verifyingContract": "0x1234567890123456789012345678901234567890"
-      },
-      "message": {
-        "content": "Hello, EIP-712!",
-        "timestamp": 1705312800
+    "jsonrpc": "2.0",
+    "method": "eth_signTypedData_v4",
+    "params": [{
+      "typed_data": {
+        "types": {
+          "EIP712Domain": [
+            {"name": "name", "type": "string"},
+            {"name": "version", "type": "string"},
+            {"name": "chainId", "type": "uint256"},
+            {"name": "verifyingContract", "type": "address"}
+          ],
+          "Message": [
+            {"name": "content", "type": "string"},
+            {"name": "timestamp", "type": "uint256"}
+          ]
+        },
+        "primaryType": "Message",
+        "domain": {
+          "name": "My App",
+          "version": "1",
+          "chainId": 1,
+          "verifyingContract": "0x1234567890123456789012345678901234567890"
+        },
+        "message": {
+          "content": "Hello, EIP-712!",
+          "timestamp": 1705312800
+        }
       }
-    }
+    }],
+    "id": 1
   }'
 ```
 
@@ -56,7 +63,11 @@ curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/sign-typed-data" \
 
 ```json
 {
-  "signature": "0x..."
+  "jsonrpc": "2.0",
+  "result": {
+    "signature": "0x..."
+  },
+  "id": 1
 }
 ```
 
@@ -352,10 +363,15 @@ const typedData = {
 };
 
 // Sign with Better Wallet
-const response = await fetch(`/v1/wallets/${walletId}/sign-typed-data`, {
+const response = await fetch(`/v1/wallets/${walletId}/rpc`, {
   method: 'POST',
   headers: { ... },
-  body: JSON.stringify({ typed_data: typedData })
+  body: JSON.stringify({
+    jsonrpc: '2.0',
+    method: 'eth_signTypedData_v4',
+    params: [{ typed_data: typedData }],
+    id: 1
+  })
 });
 ```
 

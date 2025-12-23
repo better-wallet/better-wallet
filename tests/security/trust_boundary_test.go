@@ -466,7 +466,7 @@ func TestTrustBoundary3_SignatureVerification(t *testing.T) {
 	defer env.cleanup()
 
 	t.Run("missing_signature_header", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/wallets/sign", nil)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/wallets/rpc", nil)
 		recorder := httptest.NewRecorder()
 
 		// Check for signature header on high-risk operations
@@ -483,7 +483,7 @@ func TestTrustBoundary3_SignatureVerification(t *testing.T) {
 	})
 
 	t.Run("invalid_signature_format", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/wallets/sign", nil)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/wallets/rpc", nil)
 		req.Header.Set("X-Authorization-Signature", "not-valid-base64!!!")
 		recorder := httptest.NewRecorder()
 
@@ -520,7 +520,7 @@ func TestTrustBoundary3_SignatureVerification(t *testing.T) {
 
 		// Simulate signature from different key
 		differentKeyID := uuid.New()
-		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/wallets/%s/sign", wallet.ID), nil)
+		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/wallets/%s/rpc", wallet.ID), nil)
 		req.Header.Set("X-Authorization-Signature", base64.StdEncoding.EncodeToString([]byte("fake-sig")))
 		req.Header.Set("X-Signer-Key-Id", differentKeyID.String())
 		recorder := httptest.NewRecorder()
@@ -556,7 +556,7 @@ func TestTrustBoundary3_SignatureVerification(t *testing.T) {
 		}
 		env.store.SessionSigners.AddSigner(expiredSigner)
 
-		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/wallets/%s/sign", walletID), nil)
+		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/wallets/%s/rpc", walletID), nil)
 		req.Header.Set("X-Authorization-Signature", base64.StdEncoding.EncodeToString([]byte("sig")))
 		req.Header.Set("X-Signer-Key-Id", signerKeyID.String())
 		recorder := httptest.NewRecorder()
@@ -593,7 +593,7 @@ func TestTrustBoundary3_SignatureVerification(t *testing.T) {
 		}
 		env.store.SessionSigners.AddSigner(revokedSigner)
 
-		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/wallets/%s/sign", walletID), nil)
+		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/wallets/%s/rpc", walletID), nil)
 		req.Header.Set("X-Authorization-Signature", base64.StdEncoding.EncodeToString([]byte("sig")))
 		req.Header.Set("X-Signer-Key-Id", signerKeyID.String())
 		recorder := httptest.NewRecorder()
@@ -616,7 +616,7 @@ func TestTrustBoundary3_SignatureVerification(t *testing.T) {
 
 	t.Run("quorum_insufficient_signatures", func(t *testing.T) {
 		// 2-of-3 quorum requires at least 2 signatures
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/wallets/sign", nil)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/wallets/rpc", nil)
 		// Only provide 1 signature when 2 are required
 		req.Header.Set("X-Authorization-Signatures", base64.StdEncoding.EncodeToString([]byte(`[{"key_id":"key1","signature":"sig1"}]`)))
 		recorder := httptest.NewRecorder()
@@ -675,7 +675,7 @@ func TestTrustBoundary3_SignatureVerification(t *testing.T) {
 		// App-managed wallet has no user owner
 		wallet := env.store.CreateTestWallet(appID, nil, nil)
 
-		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/wallets/%s/sign", wallet.ID), nil)
+		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/wallets/%s/rpc", wallet.ID), nil)
 		// No X-Authorization-Signature header
 		recorder := httptest.NewRecorder()
 
@@ -691,7 +691,7 @@ func TestTrustBoundary3_SignatureVerification(t *testing.T) {
 	})
 
 	t.Run("valid_owner_signature", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/wallets/sign", nil)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/wallets/rpc", nil)
 		req.Header.Set("X-Authorization-Signature", base64.StdEncoding.EncodeToString([]byte("valid-signature")))
 		recorder := httptest.NewRecorder()
 

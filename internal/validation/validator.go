@@ -3,32 +3,29 @@ package validation
 import (
 	"fmt"
 	"math/big"
-	"regexp"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
 )
 
-// EthereumAddressPattern is the regex pattern for Ethereum addresses
-var EthereumAddressPattern = regexp.MustCompile(`^0x[0-9a-fA-F]{40}$`)
-
 // ValidateEthereumAddress validates an Ethereum address format
+// Requires 0x prefix followed by 40 hex characters
 func ValidateEthereumAddress(address string) error {
 	if address == "" {
 		return fmt.Errorf("address cannot be empty")
 	}
 
-	if !EthereumAddressPattern.MatchString(address) {
-		return fmt.Errorf("invalid Ethereum address format: must be 0x followed by 40 hex characters")
+	// Require 0x prefix (go-ethereum's IsHexAddress accepts without prefix, but we want strict format)
+	if !strings.HasPrefix(address, "0x") && !strings.HasPrefix(address, "0X") {
+		return fmt.Errorf("invalid Ethereum address format")
 	}
 
-	// Additional validation: check if it's a valid checksum address
 	if !common.IsHexAddress(address) {
-		return fmt.Errorf("invalid Ethereum address")
+		return fmt.Errorf("invalid Ethereum address format")
 	}
 
-	// Prevent sending to zero address (common mistake)
-	if strings.ToLower(address) == "0x0000000000000000000000000000000000000000" {
+	// Business rule: prevent sending to zero address (common mistake)
+	if strings.EqualFold(address, "0x0000000000000000000000000000000000000000") {
 		return fmt.Errorf("cannot send to zero address")
 	}
 

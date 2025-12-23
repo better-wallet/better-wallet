@@ -259,13 +259,19 @@ curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/session-signers" \
   }'
 
 # Use session signer for signing (sign with session signer's key)
-curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/sign" \
+curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/rpc" \
   -H "X-App-Id: $APP_ID" \
   -H "X-App-Secret: $APP_SECRET" \
   -H "Authorization: Bearer $JWT" \
   -H "X-Authorization-Signature: $SESSION_SIGNER_SIGNATURE" \
   -H "X-Authorization-Key-Id: $SESSION_SIGNER_AUTH_KEY_ID" \
-  -d '{"to": "0x...", "value": "100000000000000000"}'
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "eth_sendTransaction",
+    "params": [{"to": "0x...", "value": "0x16345785d8a0000", "chain_id": 1, "nonce": "0x0", "gas_limit": "0x5208", "max_fee_per_gas": "0x6fc23ac00", "max_priority_fee_per_gas": "0x77359400"}],
+    "id": 1
+  }'
 ```
 
 See [Session Signers](../session-signers/overview.md) for complete documentation.

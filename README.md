@@ -200,28 +200,38 @@ Response:
 ]
 ```
 
-#### Sign Transaction
+#### Sign Transaction (JSON-RPC)
 ```
-POST /v1/wallets/{wallet_id}/sign
+POST /v1/wallets/{wallet_id}/rpc
 Content-Type: application/json
 
 {
-  "to": "0x...",
-  "value": "1000000000000000000",
-  "chain_id": 1,
-  "nonce": 0,
-  "gas_limit": 21000,
-  "gas_fee_cap": "30000000000",
-  "gas_tip_cap": "2000000000",
-  "data": "0x"
+  "jsonrpc": "2.0",
+  "method": "eth_sendTransaction",
+  "params": [{
+    "to": "0x...",
+    "value": "0xde0b6b3a7640000",
+    "chain_id": 1,
+    "nonce": "0x0",
+    "gas_limit": "0x5208",
+    "max_fee_per_gas": "0x6fc23ac00",
+    "max_priority_fee_per_gas": "0x77359400"
+  }],
+  "id": 1
 }
 
 Response:
 {
-  "tx_hash": "0x...",
-  "signed_tx": "0x..."
+  "jsonrpc": "2.0",
+  "result": {
+    "tx_hash": "0x...",
+    "signed_transaction": "0x..."
+  },
+  "id": 1
 }
 ```
+
+Supported JSON-RPC methods: `eth_sendTransaction`, `eth_signTransaction`, `eth_signTypedData_v4`, `personal_sign`
 
 ## 🔐 Security Model
 

@@ -97,8 +97,9 @@ func TestPerfBaseline(t *testing.T) {
 	ownerPrivKey, ownerPubKeyHex := generateP256KeyPair(t)
 	ownedWalletID := seedUserOwnedWallet(t, appCtx, walletService, userSub, ownerPubKeyHex, policyID)
 
-	signBody := []byte(`{"message":"perf smoke"}`)
-	signURL := testServer.URL + "/v1/wallets/" + ownedWalletID.String() + "/sign-message"
+	// Use RPC endpoint with eth_signTypedData_v4 for signing perf test
+	signBody := []byte(`{"method":"eth_signTypedData_v4","params":{"typed_data":{"types":{"EIP712Domain":[{"name":"name","type":"string"}],"Message":[{"name":"content","type":"string"}]},"primary_type":"Message","domain":{"name":"PerfTest"},"message":{"content":"perf smoke"}}}}`)
+	signURL := testServer.URL + "/v1/wallets/" + ownedWalletID.String() + "/rpc"
 	canonicalReq, err := http.NewRequest(http.MethodPost, signURL, bytes.NewReader(signBody))
 	require.NoError(t, err)
 	addAppHeaders(canonicalReq, appSeed.appID, appSeed.appSecret)
@@ -172,7 +173,7 @@ func TestPerfBaseline(t *testing.T) {
 		addAppHeaders(req, appSeed.appID, appSeed.appSecret)
 		req.Header.Set("Authorization", "Bearer "+token)
 	}, http.StatusOK)
-	measure("sign-message", http.MethodPost, signURL, signBody, func(req *http.Request) {
+	measure("sign-typed-data", http.MethodPost, signURL, signBody, func(req *http.Request) {
 		addAppHeaders(req, appSeed.appID, appSeed.appSecret)
 		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("X-Authorization-Signature", signature)

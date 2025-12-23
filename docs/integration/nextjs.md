@@ -127,26 +127,36 @@ export class BetterWalletClient {
       data?: string;
     }
   ) {
-    return this.request(`/v1/wallets/${walletId}/sign`, {
+    return this.request(`/v1/wallets/${walletId}/rpc`, {
       method: 'POST',
       body: JSON.stringify({
-        to: transaction.to,
-        value: transaction.value,
-        chain_id: transaction.chainId,
-        nonce: transaction.nonce,
-        gas_limit: transaction.gasLimit,
-        gas_fee_cap: transaction.gasFeeСap,
-        gas_tip_cap: transaction.gasTipCap,
-        data: transaction.data || '',
+        jsonrpc: '2.0',
+        method: 'eth_sendTransaction',
+        params: [{
+          to: transaction.to,
+          value: transaction.value,
+          chain_id: transaction.chainId,
+          nonce: transaction.nonce,
+          gas_limit: transaction.gasLimit,
+          max_fee_per_gas: transaction.gasFeeСap,
+          max_priority_fee_per_gas: transaction.gasTipCap,
+          data: transaction.data || '',
+        }],
+        id: 1,
       }),
       userToken,
     });
   }
 
   async signMessage(userToken: string, walletId: string, message: string) {
-    return this.request(`/v1/wallets/${walletId}/sign-message`, {
+    return this.request(`/v1/wallets/${walletId}/rpc`, {
       method: 'POST',
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'personal_sign',
+        params: [{ message }],
+        id: 1,
+      }),
       userToken,
     });
   }
@@ -197,7 +207,7 @@ export const POST = withApiAuthRequired(async function handler(req) {
 ```
 
 ```typescript
-// app/api/wallets/[id]/sign/route.ts
+// app/api/wallets/[id]/rpc/route.ts
 import { getAccessToken, withApiAuthRequired } from '@auth0/nextjs-auth0';
 import { NextResponse } from 'next/server';
 import { betterWallet } from '@/lib/better-wallet';
@@ -208,14 +218,15 @@ export const POST = withApiAuthRequired(async function handler(
 ) {
   try {
     const { accessToken } = await getAccessToken();
-    const body = await req.json();
+    const body = await req.json(); // JSON-RPC format
     const { id } = params;
 
-    const result = await betterWallet.signTransaction(
-      accessToken!,
-      id,
-      body
-    );
+    // Proxy the JSON-RPC request to Better Wallet
+    const result = await betterWallet.request(`/v1/wallets/${id}/rpc`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+      userToken: accessToken!,
+    });
     return NextResponse.json(result);
   } catch (error: any) {
     return NextResponse.json(
@@ -294,10 +305,23 @@ export function useWallet(walletId: string) {
     gasFeeСap: string;
     gasTipCap: string;
   }) => {
-    const response = await fetch(`/api/wallets/${walletId}/sign`, {
+    const response = await fetch(`/api/wallets/${walletId}/rpc`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(transaction),
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'eth_sendTransaction',
+        params: [{
+          to: transaction.to,
+          value: transaction.value,
+          chain_id: transaction.chainId,
+          nonce: transaction.nonce,
+          gas_limit: transaction.gasLimit,
+          max_fee_per_gas: transaction.gasFeeСap,
+          max_priority_fee_per_gas: transaction.gasTipCap,
+        }],
+        id: 1,
+      }),
     });
 
     if (!response.ok) {
@@ -309,10 +333,15 @@ export function useWallet(walletId: string) {
   };
 
   const signMessage = async (message: string) => {
-    const response = await fetch(`/api/wallets/${walletId}/sign-message`, {
+    const response = await fetch(`/api/wallets/${walletId}/rpc`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'personal_sign',
+        params: [{ message }],
+        id: 1,
+      }),
     });
 
     if (!response.ok) {

@@ -10,6 +10,8 @@ Personal message signing creates a signature over arbitrary text, typically used
 - **Off-chain signatures**: Sign terms, agreements, or verifications
 - **Sign-In with Ethereum (SIWE)**: Web3 authentication standard
 
+All signing operations use the unified `/rpc` endpoint with JSON-RPC 2.0 format.
+
 ---
 
 ## Basic Message Signing
@@ -17,13 +19,18 @@ Personal message signing creates a signature over arbitrary text, typically used
 ### Request
 
 ```bash
-curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/sign-message" \
+curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/rpc" \
   -H "X-App-Id: $APP_ID" \
   -H "X-App-Secret: $APP_SECRET" \
   -H "Authorization: Bearer $JWT" \
   -H "Content-Type: application/json" \
   -d '{
-    "message": "Hello, World!"
+    "jsonrpc": "2.0",
+    "method": "personal_sign",
+    "params": [{
+      "message": "Hello, World!"
+    }],
+    "id": 1
   }'
 ```
 
@@ -31,7 +38,11 @@ curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/sign-message" \
 
 ```json
 {
-  "signature": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1b"
+  "jsonrpc": "2.0",
+  "result": {
+    "signature": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1b"
+  },
+  "id": 1
 }
 ```
 
@@ -69,7 +80,7 @@ This prevents signed messages from being replayed as transactions.
 ### Authentication
 
 ```bash
-curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/sign-message" \
+curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/rpc" \
   -H "..." \
   -d '{
     "message": "Sign in to MyApp\n\nNonce: a1b2c3d4e5f6\nTimestamp: 2025-01-15T10:00:00Z"
@@ -79,7 +90,7 @@ curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/sign-message" \
 ### Terms Acceptance
 
 ```bash
-curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/sign-message" \
+curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/rpc" \
   -H "..." \
   -d '{
     "message": "I agree to the Terms of Service v2.0\n\nHash: 0xabc123...\nDate: 2025-01-15"
@@ -89,7 +100,7 @@ curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/sign-message" \
 ### Ownership Verification
 
 ```bash
-curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/sign-message" \
+curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/rpc" \
   -H "..." \
   -d '{
     "message": "This wallet belongs to user@example.com\nVerification code: XYZ123"
@@ -129,7 +140,7 @@ Chain ID: 1
 Nonce: abc123xyz
 Issued At: 2025-01-15T10:00:00.000Z"
 
-curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/sign-message" \
+curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/rpc" \
   -H "..." \
   -d '{
     "message": "'"$MESSAGE"'"
@@ -312,11 +323,17 @@ Nonce: ${nonce}
 Issued At: ${new Date().toISOString()}`;
 
 // 3. Sign with Better Wallet
-const { signature } = await fetch(`/api/wallets/${walletId}/sign-message`, {
+const response = await fetch(`/api/wallets/${walletId}/rpc`, {
   method: 'POST',
   headers: { ... },
-  body: JSON.stringify({ message })
+  body: JSON.stringify({
+    jsonrpc: '2.0',
+    method: 'personal_sign',
+    params: [{ message }],
+    id: 1
+  })
 }).then(r => r.json());
+const { signature } = response.result;
 
 // 4. Verify on backend and issue session
 const { token } = await fetch('/api/auth/verify', {

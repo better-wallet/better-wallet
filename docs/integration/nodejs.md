@@ -150,19 +150,24 @@ export class BetterWalletClient {
     },
     authSignature?: { signature: string; keyId: string }
   ) {
-    return this.request(`/v1/wallets/${walletId}/sign`, {
+    return this.request(`/v1/wallets/${walletId}/rpc`, {
       method: 'POST',
       userToken,
       idempotencyKey: crypto.randomUUID(),
       body: {
-        to: tx.to,
-        value: tx.value,
-        chain_id: tx.chainId,
-        nonce: tx.nonce,
-        gas_limit: tx.gasLimit,
-        gas_fee_cap: tx.gasFeeСap,
-        gas_tip_cap: tx.gasTipCap,
-        data: tx.data || '',
+        jsonrpc: '2.0',
+        method: 'eth_sendTransaction',
+        params: [{
+          to: tx.to,
+          value: tx.value,
+          chain_id: tx.chainId,
+          nonce: tx.nonce,
+          gas_limit: tx.gasLimit,
+          max_fee_per_gas: tx.gasFeeСap,
+          max_priority_fee_per_gas: tx.gasTipCap,
+          data: tx.data || '',
+        }],
+        id: 1,
       },
       authSignature,
     });
@@ -174,10 +179,15 @@ export class BetterWalletClient {
     message: string,
     authSignature?: { signature: string; keyId: string }
   ) {
-    return this.request(`/v1/wallets/${walletId}/sign-message`, {
+    return this.request(`/v1/wallets/${walletId}/rpc`, {
       method: 'POST',
       userToken,
-      body: { message },
+      body: {
+        jsonrpc: '2.0',
+        method: 'personal_sign',
+        params: [{ message }],
+        id: 1,
+      },
       authSignature,
     });
   }
@@ -363,20 +373,25 @@ const authKey = await client.registerAuthorizationKey(userToken, {
 
 // Later: Sign a transaction with authorization
 const idempotencyKey = crypto.randomUUID();
-const body = {
-  to: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb',
-  value: '1000000000000000000',
-  chain_id: 1,
-  nonce: 0,
-  gas_limit: 21000,
-  gas_fee_cap: '30000000000',
-  gas_tip_cap: '2000000000',
+const rpcBody = {
+  jsonrpc: '2.0',
+  method: 'eth_sendTransaction',
+  params: [{
+    to: '0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb',
+    value: '0xde0b6b3a7640000', // 1 ETH in hex
+    chain_id: 1,
+    nonce: '0x0',
+    gas_limit: '0x5208',
+    max_fee_per_gas: '0x6fc23ac00',
+    max_priority_fee_per_gas: '0x77359400',
+  }],
+  id: 1,
 };
 
 const signature = createAuthSignature(
   'POST',
-  `/v1/wallets/${walletId}/sign`,
-  body,
+  `/v1/wallets/${walletId}/rpc`,
+  rpcBody,
   APP_ID,
   idempotencyKey,
   keyPair.privateKey
@@ -385,7 +400,7 @@ const signature = createAuthSignature(
 const result = await client.signTransaction(
   userToken,
   walletId,
-  body,
+  rpcBody.params[0],
   { signature, keyId: authKey.id }
 );
 ```
@@ -471,32 +486,18 @@ app.get('/api/wallets/:id', authMiddleware, async (req, res) => {
   }
 });
 
-app.post('/api/wallets/:id/sign', authMiddleware, async (req, res) => {
+// JSON-RPC endpoint for all signing operations
+app.post('/api/wallets/:id/rpc', authMiddleware, async (req, res) => {
   try {
-    const result = await betterWallet.signTransaction(
-      req.userToken,
-      req.params.id,
-      req.body
-    );
-    res.json(result);
-  } catch (error) {
-    console.error('Failed to sign transaction:', error);
-    res.status(error.statusCode || 500).json({
-      error: error.message,
+    // Proxy the JSON-RPC request to Better Wallet
+    const result = await betterWallet.request(`/v1/wallets/${req.params.id}/rpc`, {
+      method: 'POST',
+      userToken: req.userToken,
+      body: req.body, // JSON-RPC format: { jsonrpc, method, params, id }
     });
-  }
-});
-
-app.post('/api/wallets/:id/sign-message', authMiddleware, async (req, res) => {
-  try {
-    const result = await betterWallet.signMessage(
-      req.userToken,
-      req.params.id,
-      req.body.message
-    );
     res.json(result);
   } catch (error) {
-    console.error('Failed to sign message:', error);
+    console.error('RPC request failed:', error);
     res.status(error.statusCode || 500).json({
       error: error.message,
     });

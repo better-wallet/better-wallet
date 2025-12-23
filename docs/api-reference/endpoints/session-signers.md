@@ -219,9 +219,11 @@ Once created, session signers can sign transactions without owner involvement.
 
 ### Signing with Session Signer
 
+All signing operations use the unified `/rpc` endpoint with JSON-RPC 2.0 format:
+
 ```bash
 # Sign a transaction using session signer
-curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/sign" \
+curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/rpc" \
   -H "X-App-Id: $APP_ID" \
   -H "X-App-Secret: $APP_SECRET" \
   -H "Authorization: Bearer $JWT" \
@@ -229,13 +231,18 @@ curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/sign" \
   -H "X-Authorization-Key-Id: $SESSION_SIGNER_KEY_ID" \
   -H "Content-Type: application/json" \
   -d '{
-    "to": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
-    "value": "1000000000000000000",
-    "chain_id": 1,
-    "nonce": 0,
-    "gas_limit": 21000,
-    "gas_fee_cap": "30000000000",
-    "gas_tip_cap": "2000000000"
+    "jsonrpc": "2.0",
+    "method": "eth_sendTransaction",
+    "params": [{
+      "to": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+      "value": "0xde0b6b3a7640000",
+      "chain_id": 1,
+      "nonce": "0x0",
+      "gas_limit": "0x5208",
+      "max_fee_per_gas": "0x6fc23ac00",
+      "max_priority_fee_per_gas": "0x77359400"
+    }],
+    "id": 1
   }'
 ```
 

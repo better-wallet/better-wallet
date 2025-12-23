@@ -552,24 +552,3 @@ func TestValidateTransaction(t *testing.T) {
 	}
 }
 
-func TestEthereumAddressPattern(t *testing.T) {
-	// Test the regex pattern directly
-	tests := []struct {
-		address string
-		match   bool
-	}{
-		{"0x742d35cc6634c0532925a3b844bc454e4438f44e", true},
-		{"0x742D35CC6634C0532925A3B844BC454E4438F44E", true},
-		{"0x0000000000000000000000000000000000000000", true},
-		{"742d35cc6634c0532925a3b844bc454e4438f44e", false},  // no 0x
-		{"0x742d35cc6634c0532925a3b844bc454e4438f4", false},  // too short
-		{"0x742d35cc6634c0532925a3b844bc454e4438f44e1", false}, // too long
-		{"0xGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG", false}, // invalid hex
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.address, func(t *testing.T) {
-			assert.Equal(t, tt.match, EthereumAddressPattern.MatchString(tt.address))
-		})
-	}
-}

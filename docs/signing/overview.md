@@ -1,14 +1,15 @@
 # Signing Overview
 
-Better Wallet supports multiple signing operations for Ethereum transactions, messages, and structured data. This guide explains the different signing methods and when to use each.
+Better Wallet supports multiple signing operations for Ethereum transactions, messages, and structured data. All signing uses the unified `/rpc` endpoint with JSON-RPC 2.0 format.
 
 ## Signing Methods
 
-| Method | Use Case | Standard |
-|--------|----------|----------|
-| Transaction Signing | Send ETH, interact with contracts | EIP-1559, Legacy |
-| Personal Message Signing | Authentication, off-chain signatures | EIP-191 |
-| Typed Data Signing | Permits, orders, structured data | EIP-712 |
+| JSON-RPC Method | Use Case | Standard |
+|-----------------|----------|----------|
+| `eth_sendTransaction` | Send ETH, interact with contracts | EIP-1559, Legacy |
+| `eth_signTransaction` | Sign transaction (no broadcast) | EIP-1559, Legacy |
+| `personal_sign` | Authentication, off-chain signatures | EIP-191 |
+| `eth_signTypedData_v4` | Permits, orders, structured data | EIP-712 |
 
 ## Transaction Signing
 
@@ -17,20 +18,24 @@ Sign Ethereum transactions for on-chain execution.
 ### EIP-1559 Transaction
 
 ```bash
-curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/sign" \
+curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/rpc" \
   -H "X-App-Id: $APP_ID" \
   -H "X-App-Secret: $APP_SECRET" \
   -H "Authorization: Bearer $JWT" \
   -H "Content-Type: application/json" \
   -d '{
-    "to": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
-    "value": "1000000000000000000",
-    "chain_id": 1,
-    "nonce": 0,
-    "gas_limit": 21000,
-    "gas_fee_cap": "30000000000",
-    "gas_tip_cap": "2000000000",
-    "data": ""
+    "jsonrpc": "2.0",
+    "method": "eth_sendTransaction",
+    "params": [{
+      "to": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+      "value": "0xde0b6b3a7640000",
+      "chain_id": 1,
+      "nonce": "0x0",
+      "gas_limit": "0x5208",
+      "max_fee_per_gas": "0x6fc23ac00",
+      "max_priority_fee_per_gas": "0x77359400"
+    }],
+    "id": 1
   }'
 ```
 
@@ -63,17 +68,25 @@ curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/sign" \
 
 ```bash
 # ERC-20 transfer
-curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/sign" \
-  -H "..." \
+curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/rpc" \
+  -H "X-App-Id: $APP_ID" \
+  -H "X-App-Secret: $APP_SECRET" \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
   -d '{
-    "to": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-    "value": "0",
-    "chain_id": 1,
-    "nonce": 1,
-    "gas_limit": 65000,
-    "gas_fee_cap": "30000000000",
-    "gas_tip_cap": "2000000000",
-    "data": "0xa9059cbb0000000000000000000000001234567890123456789012345678901234567890000000000000000000000000000000000000000000000000000000003b9aca00"
+    "jsonrpc": "2.0",
+    "method": "eth_sendTransaction",
+    "params": [{
+      "to": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "value": "0x0",
+      "chain_id": 1,
+      "nonce": "0x1",
+      "gas_limit": "0xfde8",
+      "max_fee_per_gas": "0x6fc23ac00",
+      "max_priority_fee_per_gas": "0x77359400",
+      "data": "0xa9059cbb0000000000000000000000001234567890123456789012345678901234567890000000000000000000000000000000000000000000000000000000003b9aca00"
+    }],
+    "id": 1
   }'
 ```
 
@@ -84,13 +97,18 @@ Sign arbitrary messages for authentication or off-chain verification.
 ### Request
 
 ```bash
-curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/sign-message" \
+curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/rpc" \
   -H "X-App-Id: $APP_ID" \
   -H "X-App-Secret: $APP_SECRET" \
   -H "Authorization: Bearer $JWT" \
   -H "Content-Type: application/json" \
   -d '{
-    "message": "Welcome to MyApp!\n\nPlease sign this message to verify your wallet ownership.\n\nNonce: abc123xyz"
+    "jsonrpc": "2.0",
+    "method": "personal_sign",
+    "params": [{
+      "message": "Welcome to MyApp!\n\nPlease sign this message to verify your wallet ownership.\n\nNonce: abc123xyz"
+    }],
+    "id": 1
   }'
 ```
 
@@ -98,7 +116,11 @@ curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/sign-message" \
 
 ```json
 {
-  "signature": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1b"
+  "jsonrpc": "2.0",
+  "result": {
+    "signature": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1b"
+  },
+  "id": 1
 }
 ```
 
@@ -124,43 +146,48 @@ Sign structured data with type information for better security and UX.
 ### Request
 
 ```bash
-curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/sign-typed-data" \
+curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/rpc" \
   -H "X-App-Id: $APP_ID" \
   -H "X-App-Secret: $APP_SECRET" \
   -H "Authorization: Bearer $JWT" \
   -H "Content-Type: application/json" \
   -d '{
-    "typed_data": {
-      "types": {
-        "EIP712Domain": [
-          {"name": "name", "type": "string"},
-          {"name": "version", "type": "string"},
-          {"name": "chainId", "type": "uint256"},
-          {"name": "verifyingContract", "type": "address"}
-        ],
-        "Permit": [
-          {"name": "owner", "type": "address"},
-          {"name": "spender", "type": "address"},
-          {"name": "value", "type": "uint256"},
-          {"name": "nonce", "type": "uint256"},
-          {"name": "deadline", "type": "uint256"}
-        ]
-      },
-      "primaryType": "Permit",
-      "domain": {
-        "name": "USD Coin",
-        "version": "2",
-        "chainId": 1,
-        "verifyingContract": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
-      },
-      "message": {
-        "owner": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
-        "spender": "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
-        "value": "1000000000",
-        "nonce": 0,
-        "deadline": 1735689600
+    "jsonrpc": "2.0",
+    "method": "eth_signTypedData_v4",
+    "params": [{
+      "typed_data": {
+        "types": {
+          "EIP712Domain": [
+            {"name": "name", "type": "string"},
+            {"name": "version", "type": "string"},
+            {"name": "chainId", "type": "uint256"},
+            {"name": "verifyingContract", "type": "address"}
+          ],
+          "Permit": [
+            {"name": "owner", "type": "address"},
+            {"name": "spender", "type": "address"},
+            {"name": "value", "type": "uint256"},
+            {"name": "nonce", "type": "uint256"},
+            {"name": "deadline", "type": "uint256"}
+          ]
+        },
+        "primaryType": "Permit",
+        "domain": {
+          "name": "USD Coin",
+          "version": "2",
+          "chainId": 1,
+          "verifyingContract": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+        },
+        "message": {
+          "owner": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+          "spender": "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+          "value": "1000000000",
+          "nonce": 0,
+          "deadline": 1735689600
+        }
       }
-    }
+    }],
+    "id": 1
   }'
 ```
 
@@ -168,7 +195,11 @@ curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/sign-typed-data" \
 
 ```json
 {
-  "signature": "0x..."
+  "jsonrpc": "2.0",
+  "result": {
+    "signature": "0x..."
+  },
+  "id": 1
 }
 ```
 
@@ -264,7 +295,7 @@ For delegated signing (bots, automated systems), session signers use the same au
 
 ```bash
 # Sign using a session signer's authorization key
-curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/sign" \
+curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/rpc" \
   -H "X-App-Id: $APP_ID" \
   -H "X-App-Secret: $APP_SECRET" \
   -H "Authorization: Bearer $JWT" \
@@ -272,10 +303,18 @@ curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/sign" \
   -H "X-Authorization-Key-Id: $SESSION_SIGNER_AUTH_KEY_ID" \
   -H "Content-Type: application/json" \
   -d '{
-    "to": "0x...",
-    "value": "100000000000000000",
-    "chain_id": 1,
-    ...
+    "jsonrpc": "2.0",
+    "method": "eth_sendTransaction",
+    "params": [{
+      "to": "0x...",
+      "value": "0x16345785d8a0000",
+      "chain_id": 1,
+      "nonce": "0x0",
+      "gas_limit": "0x5208",
+      "max_fee_per_gas": "0x6fc23ac00",
+      "max_priority_fee_per_gas": "0x77359400"
+    }],
+    "id": 1
   }'
 ```
 

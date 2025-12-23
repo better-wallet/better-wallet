@@ -239,7 +239,7 @@ func TestAttack_SignatureReplay(t *testing.T) {
 		verifier := auth.NewSignatureVerifier()
 
 		// Original request payload
-		originalPayload := []byte(`{"version":"v1","method":"POST","url":"/v1/wallets/123/sign","body":"{\"to\":\"0xabc\",\"value\":\"1000\"}","headers":{"x-app-id":"app1"}}`)
+		originalPayload := []byte(`{"version":"v1","method":"POST","url":"/v1/wallets/123/rpc","body":"{\"to\":\"0xabc\",\"value\":\"1000\"}","headers":{"x-app-id":"app1"}}`)
 
 		// Sign original payload
 		signature, err := signPayload(privKey, originalPayload)
@@ -251,7 +251,7 @@ func TestAttack_SignatureReplay(t *testing.T) {
 		assert.True(t, valid, "original signature should be valid")
 
 		// Try to use same signature for different request
-		differentPayload := []byte(`{"version":"v1","method":"POST","url":"/v1/wallets/123/sign","body":"{\"to\":\"0xabc\",\"value\":\"999999\"}","headers":{"x-app-id":"app1"}}`)
+		differentPayload := []byte(`{"version":"v1","method":"POST","url":"/v1/wallets/123/rpc","body":"{\"to\":\"0xabc\",\"value\":\"999999\"}","headers":{"x-app-id":"app1"}}`)
 
 		// Should fail - signature doesn't match different payload
 		valid, err = verifier.VerifySignature(signature, differentPayload, pubPEM)
@@ -274,10 +274,10 @@ func TestAttack_SignatureReplay(t *testing.T) {
 		payload1 := map[string]interface{}{
 			"version": "v1",
 			"method":  "POST",
-			"url":     "/v1/wallets/123/sign",
+			"url":     "/v1/wallets/123/rpc",
 			"body":    `{"to":"0xabc"}`,
 			"headers": map[string]string{
-				"x-app-id":         "app1",
+				"x-app-id":          "app1",
 				"x-idempotency-key": idempotencyKey1,
 			},
 		}
@@ -285,10 +285,10 @@ func TestAttack_SignatureReplay(t *testing.T) {
 		payload2 := map[string]interface{}{
 			"version": "v1",
 			"method":  "POST",
-			"url":     "/v1/wallets/123/sign",
+			"url":     "/v1/wallets/123/rpc",
 			"body":    `{"to":"0xabc"}`,
 			"headers": map[string]string{
-				"x-app-id":         "app1",
+				"x-app-id":          "app1",
 				"x-idempotency-key": idempotencyKey2,
 			},
 		}

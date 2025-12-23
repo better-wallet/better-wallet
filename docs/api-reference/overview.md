@@ -289,9 +289,7 @@ async function fetchWithRetry(url, options, maxRetries = 3) {
 | GET | `/v1/wallets` | List wallets |
 | GET | `/v1/wallets/{id}` | Get wallet |
 | DELETE | `/v1/wallets/{id}` | Delete wallet |
-| POST | `/v1/wallets/{id}/sign` | Sign transaction |
-| POST | `/v1/wallets/{id}/sign-message` | Sign message |
-| POST | `/v1/wallets/{id}/sign-typed-data` | Sign EIP-712 data |
+| POST | `/v1/wallets/{id}/rpc` | JSON-RPC signing (eth_sendTransaction, eth_signTypedData_v4, personal_sign) |
 
 ### Policies
 
@@ -374,9 +372,14 @@ WALLET=$(curl -X POST "$API/v1/wallets" \
 WALLET_ID=$(echo $WALLET | jq -r '.id')
 
 # 2. Sign transaction
-curl -X POST "$API/v1/wallets/$WALLET_ID/sign" \
+curl -X POST "$API/v1/wallets/$WALLET_ID/rpc" \
   -H "..." \
-  -d '{"to": "0x...", "value": "1000000000000000000", ...}'
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "eth_sendTransaction",
+    "params": [{"to": "0x...", "value": "0xde0b6b3a7640000", "chain_id": 1, "nonce": "0x0", "gas_limit": "0x5208", "max_fee_per_gas": "0x6fc23ac00", "max_priority_fee_per_gas": "0x77359400"}],
+    "id": 1
+  }'
 ```
 
 ### Filtered Listing
@@ -398,13 +401,18 @@ const walletIds = ['uuid1', 'uuid2', 'uuid3'];
 
 const results = await Promise.all(
   walletIds.map((id, index) =>
-    fetch(`${API}/v1/wallets/${id}/sign`, {
+    fetch(`${API}/v1/wallets/${id}/rpc`, {
       method: 'POST',
       headers: {
         'X-Idempotency-Key': `batch-sign-${Date.now()}-${index}`,
         ...commonHeaders,
       },
-      body: JSON.stringify(txParams),
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'eth_sendTransaction',
+        params: [txParams],
+        id: 1
+      }),
     })
   )
 );
@@ -455,7 +463,12 @@ class BetterWalletClient {
   }
 
   signTransaction(token: string, walletId: string, tx: object) {
-    return this.request('POST', `/v1/wallets/${walletId}/sign`, token, tx);
+    return this.request('POST', `/v1/wallets/${walletId}/rpc`, token, {
+      jsonrpc: '2.0',
+      method: 'eth_sendTransaction',
+      params: [tx],
+      id: 1
+    });
   }
 }
 ```
@@ -493,7 +506,12 @@ class BetterWalletClient:
         })
 
     def sign_transaction(self, token: str, wallet_id: str, tx: dict):
-        return self.request("POST", f"/v1/wallets/{wallet_id}/sign", token, tx)
+        return self.request("POST", f"/v1/wallets/{wallet_id}/rpc", token, {
+            "jsonrpc": "2.0",
+            "method": "eth_sendTransaction",
+            "params": [tx],
+            "id": 1
+        })
 ```
 
 ## Next Steps

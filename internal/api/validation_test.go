@@ -19,73 +19,10 @@ import (
 // API Request Validation Tests
 // =============================================================================
 
-func TestSignTransactionRequest_ValueParsing(t *testing.T) {
-	tests := []struct {
-		name        string
-		value       string
-		expectValid bool
-	}{
-		{
-			name:        "valid_zero",
-			value:       "0",
-			expectValid: true,
-		},
-		{
-			name:        "valid_small_value",
-			value:       "1000000000",
-			expectValid: true,
-		},
-		{
-			name:        "valid_1_ether",
-			value:       "1000000000000000000",
-			expectValid: true,
-		},
-		{
-			name:        "valid_large_value",
-			value:       "115792089237316195423570985008687907853269984665640564039457584007913129639935",
-			expectValid: true,
-		},
-		{
-			name:        "invalid_empty",
-			value:       "",
-			expectValid: false,
-		},
-		{
-			name:        "invalid_negative",
-			value:       "-1",
-			expectValid: true, // SetString accepts negative, validation should catch this
-		},
-		{
-			name:        "invalid_non_numeric",
-			value:       "abc",
-			expectValid: false,
-		},
-		{
-			name:        "invalid_hex_without_parse",
-			value:       "0x123",
-			expectValid: false, // SetString base 10 doesn't accept hex
-		},
-		{
-			name:        "invalid_float",
-			value:       "1.5",
-			expectValid: false,
-		},
-		{
-			name:        "invalid_with_spaces",
-			value:       "100 000",
-			expectValid: false,
-		},
-	}
+// Note: Value parsing tests moved to TestParseHexBigInt which tests the actual
+// /rpc endpoint behavior (accepts both 0x hex and decimal for backward compatibility)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, ok := new(big.Int).SetString(tt.value, 10)
-			assert.Equal(t, tt.expectValid, ok, "value parsing mismatch for: %s", tt.value)
-		})
-	}
-}
-
-func TestSignTransactionRequest_DataParsing(t *testing.T) {
+func TestTransactionData_HexParsing(t *testing.T) {
 	tests := []struct {
 		name        string
 		data        string
@@ -302,82 +239,6 @@ func TestWalletID_Parsing(t *testing.T) {
 // Request Body JSON Parsing Tests
 // =============================================================================
 
-func TestSignTransactionRequest_JSONParsing(t *testing.T) {
-	tests := []struct {
-		name        string
-		jsonBody    string
-		expectError bool
-		expectTo    string
-	}{
-		{
-			name: "valid_complete_request",
-			jsonBody: `{
-				"to": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
-				"value": "1000000000000000000",
-				"data": "0x",
-				"chain_id": 1,
-				"nonce": 0,
-				"gas_limit": 21000,
-				"gas_fee_cap": "20000000000",
-				"gas_tip_cap": "1000000000"
-			}`,
-			expectError: false,
-			expectTo:    "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
-		},
-		{
-			name: "valid_minimal_request",
-			jsonBody: `{
-				"to": "0x0000000000000000000000000000000000000000",
-				"value": "0",
-				"chain_id": 1,
-				"nonce": 0,
-				"gas_limit": 21000,
-				"gas_fee_cap": "0",
-				"gas_tip_cap": "0"
-			}`,
-			expectError: false,
-			expectTo:    "0x0000000000000000000000000000000000000000",
-		},
-		{
-			name:        "invalid_json",
-			jsonBody:    `{"to": invalid}`,
-			expectError: true,
-		},
-		{
-			name:        "empty_body",
-			jsonBody:    ``,
-			expectError: true,
-		},
-		{
-			name: "wrong_type_chain_id",
-			jsonBody: `{
-				"to": "0x0",
-				"value": "0",
-				"chain_id": "1",
-				"nonce": 0,
-				"gas_limit": 21000,
-				"gas_fee_cap": "0",
-				"gas_tip_cap": "0"
-			}`,
-			expectError: true, // chain_id should be number, not string
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var req SignTransactionRequest
-			err := json.Unmarshal([]byte(tt.jsonBody), &req)
-
-			if tt.expectError {
-				assert.Error(t, err, "expected JSON parsing error")
-			} else {
-				require.NoError(t, err, "unexpected JSON parsing error")
-				assert.Equal(t, tt.expectTo, req.To)
-			}
-		})
-	}
-}
-
 func TestCreateWalletRequest_JSONParsing(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -488,20 +349,6 @@ func TestWalletResponse_Serialization(t *testing.T) {
 	assert.Equal(t, resp.Address, decoded.Address)
 }
 
-func TestSignTransactionResponse_Serialization(t *testing.T) {
-	resp := SignTransactionResponse{
-		TxHash:   "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
-		SignedTx: "02f8730180843b9aca00850165a0bc00825208940000000000000000000000000000000000000000880de0b6b3a764000080c001a0abcdef...",
-	}
-
-	data, err := json.Marshal(resp)
-	require.NoError(t, err)
-
-	jsonStr := string(data)
-	assert.Contains(t, jsonStr, `"tx_hash"`)
-	assert.Contains(t, jsonStr, `"signed_tx"`)
-}
-
 // =============================================================================
 // HTTP Request/Response Helpers Tests
 // =============================================================================
@@ -603,15 +450,9 @@ func TestPathParsing_WalletOperations(t *testing.T) {
 			expectWalletID: true,
 		},
 		{
-			name:           "wallet_sign",
-			path:           "/v1/wallets/550e8400-e29b-41d4-a716-446655440000/sign",
-			expectedParts:  []string{"550e8400-e29b-41d4-a716-446655440000", "sign"},
-			expectWalletID: true,
-		},
-		{
-			name:           "wallet_sign_message",
-			path:           "/v1/wallets/550e8400-e29b-41d4-a716-446655440000/sign-message",
-			expectedParts:  []string{"550e8400-e29b-41d4-a716-446655440000", "sign-message"},
+			name:           "wallet_rpc",
+			path:           "/v1/wallets/550e8400-e29b-41d4-a716-446655440000/rpc",
+			expectedParts:  []string{"550e8400-e29b-41d4-a716-446655440000", "rpc"},
 			expectWalletID: true,
 		},
 		{
@@ -846,4 +687,142 @@ func parseLimit(s string) (int, error) {
 		i = -i
 	}
 	return i, nil
+}
+
+// =============================================================================
+// Hex Parsing Tests (for 0x prefixed values in /rpc)
+// =============================================================================
+
+func TestParseHexBigInt(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		expectVal   string
+		expectError bool
+	}{
+		{
+			name:      "hex_zero",
+			input:     "0x0",
+			expectVal: "0",
+		},
+		{
+			name:      "hex_small_value",
+			input:     "0x64",
+			expectVal: "100",
+		},
+		{
+			name:      "hex_1_ether",
+			input:     "0xde0b6b3a7640000",
+			expectVal: "1000000000000000000",
+		},
+		{
+			name:      "hex_uppercase",
+			input:     "0xDE0B6B3A7640000",
+			expectVal: "1000000000000000000",
+		},
+		{
+			name:      "hex_uppercase_prefix",
+			input:     "0XDE0B6B3A7640000",
+			expectVal: "1000000000000000000",
+		},
+		{
+			name:      "decimal_fallback",
+			input:     "1000000000",
+			expectVal: "1000000000",
+		},
+		{
+			name:      "empty_string",
+			input:     "",
+			expectVal: "0",
+		},
+		{
+			name:        "invalid_hex_chars",
+			input:       "0xGGGG",
+			expectError: true,
+		},
+		{
+			name:        "invalid_mixed",
+			input:       "0x12g4",
+			expectError: true,
+		},
+		{
+			name:        "invalid_decimal",
+			input:       "abc",
+			expectError: true,
+		},
+		{
+			name:        "invalid_float",
+			input:       "1.5",
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := parseHexBigInt(tt.input)
+			if tt.expectError {
+				assert.Error(t, err, "expected error for input: %s", tt.input)
+			} else {
+				require.NoError(t, err, "unexpected error for input: %s", tt.input)
+				assert.Equal(t, tt.expectVal, result.String(), "value mismatch for input: %s", tt.input)
+			}
+		})
+	}
+}
+
+func TestParseHexUint64(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		expectVal   uint64
+		expectError bool
+	}{
+		{
+			name:      "hex_21000_gas",
+			input:     "0x5208",
+			expectVal: 21000,
+		},
+		{
+			name:      "hex_zero",
+			input:     "0x0",
+			expectVal: 0,
+		},
+		{
+			name:      "decimal_fallback",
+			input:     "21000",
+			expectVal: 21000,
+		},
+		{
+			name:      "empty_string",
+			input:     "",
+			expectVal: 0,
+		},
+		{
+			name:      "hex_max_uint64",
+			input:     "0xffffffffffffffff",
+			expectVal: 18446744073709551615,
+		},
+		{
+			name:        "overflow_uint64",
+			input:       "0x10000000000000000", // 2^64
+			expectError: true,
+		},
+		{
+			name:        "invalid_hex",
+			input:       "0xZZZZ",
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := parseHexUint64(tt.input)
+			if tt.expectError {
+				assert.Error(t, err, "expected error for input: %s", tt.input)
+			} else {
+				require.NoError(t, err, "unexpected error for input: %s", tt.input)
+				assert.Equal(t, tt.expectVal, result, "value mismatch for input: %s", tt.input)
+			}
+		})
+	}
 }

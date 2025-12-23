@@ -113,10 +113,10 @@ curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/session_signers" \
 
 ### Signing with Session Signer
 
-Session signers use the same authorization signature mechanism as wallet owners. Sign the request with the session signer's private key and include the session signer's authorization key ID:
+Session signers use the same authorization signature mechanism as wallet owners. Sign the request with the session signer's private key and include the session signer's authorization key ID. All signing operations use the unified `/rpc` endpoint with JSON-RPC 2.0 format:
 
 ```bash
-curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/sign" \
+curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/rpc" \
   -H "X-App-Id: $APP_ID" \
   -H "X-App-Secret: $APP_SECRET" \
   -H "Authorization: Bearer $JWT" \
@@ -124,14 +124,19 @@ curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/sign" \
   -H "X-Authorization-Key-Id: $SESSION_SIGNER_AUTH_KEY_ID" \
   -H "Content-Type: application/json" \
   -d '{
-    "to": "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
-    "value": "100000000000000000",
-    "chain_id": 1,
-    "nonce": 0,
-    "gas_limit": 200000,
-    "gas_fee_cap": "30000000000",
-    "gas_tip_cap": "2000000000",
-    "data": "0x38ed1739..."
+    "jsonrpc": "2.0",
+    "method": "eth_sendTransaction",
+    "params": [{
+      "to": "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+      "value": "0x16345785d8a0000",
+      "chain_id": 1,
+      "nonce": "0x0",
+      "gas_limit": "0x30d40",
+      "max_fee_per_gas": "0x6fc23ac00",
+      "max_priority_fee_per_gas": "0x77359400",
+      "data": "0x38ed1739..."
+    }],
+    "id": 1
   }'
 ```
 
@@ -176,14 +181,14 @@ Counter increments with each successful signing. Once reached, all subsequent re
 
 ```json
 {
-  "allowed_methods": ["sign_transaction", "sign_message"]
+  "allowed_methods": ["eth_sendTransaction", "personal_sign"]
 }
 ```
 
 Available methods:
-- `sign_transaction` - Transaction signing
+- `eth_sendTransaction` - Transaction signing
 - `personal_sign` - Personal message signing
-- `sign_typed_data` - EIP-712 typed data signing
+- `eth_signTypedData_v4` - EIP-712 typed data signing
 
 If not specified, all methods are allowed.
 
@@ -300,7 +305,7 @@ const sessionSigner = await createSessionSigner(walletId, ownerSignature, {
   ttl: 3600, // 1 hour
   max_value: '100000000000000000', // 0.1 ETH
   max_txs: 10,
-  allowed_methods: ['sign_transaction'],
+  allowed_methods: ['eth_sendTransaction'],
   policy_override_id: telegramBotPolicyId,
 });
 ```
@@ -310,7 +315,14 @@ const sessionSigner = await createSessionSigner(walletId, ownerSignature, {
 ```javascript
 // 2. Bot signs transactions using session signer's authorization key
 async function signWithBot(walletId, sessionSignerKeyId, signatureForRequest, txParams) {
-  const response = await fetch(`${API}/v1/wallets/${walletId}/sign`, {
+  const rpcBody = {
+    jsonrpc: '2.0',
+    method: 'eth_sendTransaction',
+    params: [txParams],
+    id: 1,
+  };
+
+  const response = await fetch(`${API}/v1/wallets/${walletId}/rpc`, {
     method: 'POST',
     headers: {
       'X-App-Id': APP_ID,
@@ -320,7 +332,7 @@ async function signWithBot(walletId, sessionSignerKeyId, signatureForRequest, tx
       'X-Authorization-Key-Id': sessionSignerKeyId,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(txParams),
+    body: JSON.stringify(rpcBody),
   });
 
   return response.json();
@@ -387,7 +399,7 @@ curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/session-signers" \
 {
   "max_value": "100000000000000000",  // Only what's needed
   "max_txs": 10,                       // Reasonable limit
-  "allowed_methods": ["sign_transaction"]  // Specific methods
+  "allowed_methods": ["eth_sendTransaction"]  // Specific methods
 }
 ```
 

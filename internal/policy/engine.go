@@ -2,11 +2,13 @@ package policy
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math/big"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/better-wallet/better-wallet/pkg/types"
@@ -70,14 +72,54 @@ type EvaluationResult struct {
 	Rule     *types.PolicyRule
 }
 
+// compiledPolicyEntry holds a compiled policy schema and its content hash
+type compiledPolicyEntry struct {
+	schema      *types.PolicySchema
+	contentHash string
+}
+
 // Engine is the policy evaluation engine
 type Engine struct {
-	// Future: add caching, metrics, etc.
+	// schemaCache maps policy ID to compiled schema with content hash for invalidation
+	schemaCache sync.Map // map[string]*compiledPolicyEntry
 }
 
 // NewEngine creates a new policy engine
 func NewEngine() *Engine {
 	return &Engine{}
+}
+
+// getCompiledSchema retrieves or compiles the policy schema with caching
+// Cache key is policy ID, and content hash is used to detect changes
+func (e *Engine) getCompiledSchema(policy *types.Policy) (*types.PolicySchema, error) {
+	policyID := policy.ID.String()
+
+	// Compute content hash for cache invalidation
+	rulesBytes, _ := json.Marshal(policy.Rules)
+	hash := sha256.Sum256(rulesBytes)
+	contentHash := hex.EncodeToString(hash[:8]) // Use first 8 bytes for efficiency
+
+	// Check cache
+	if cached, ok := e.schemaCache.Load(policyID); ok {
+		entry := cached.(*compiledPolicyEntry)
+		if entry.contentHash == contentHash {
+			return entry.schema, nil
+		}
+		// Content changed, need to recompile
+	}
+
+	// Compile and cache
+	schema, err := e.parsePolicySchema(policy)
+	if err != nil {
+		return nil, err
+	}
+
+	e.schemaCache.Store(policyID, &compiledPolicyEntry{
+		schema:      schema,
+		contentHash: contentHash,
+	})
+
+	return schema, nil
 }
 
 // Evaluate evaluates a request against policies
@@ -98,8 +140,8 @@ func (e *Engine) Evaluate(ctx context.Context, policies []*types.Policy, evalCtx
 			continue
 		}
 
-		// Parse policy rules using strict schema
-		schema, err := e.parsePolicySchema(policy)
+		// Get compiled policy schema (uses cache for performance)
+		schema, err := e.getCompiledSchema(policy)
 		if err != nil {
 			// Invalid schema - deny with error
 			return &EvaluationResult{

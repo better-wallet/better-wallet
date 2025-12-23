@@ -273,11 +273,12 @@ pg_restore -h localhost -U postgres \
 psql -c "SELECT wallet_id, auth_share IS NOT NULL, exec_share IS NOT NULL FROM wallet_shares;"
 
 # 3. Test signing operation
-curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/sign-message" \
+curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/rpc" \
   -H "X-App-Id: $APP_ID" \
   -H "X-App-Secret: $APP_SECRET" \
   -H "Authorization: Bearer $JWT" \
-  -d '{"message": "recovery test"}'
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"personal_sign","params":[{"message":"recovery test"}],"id":1}'
 ```
 
 ---

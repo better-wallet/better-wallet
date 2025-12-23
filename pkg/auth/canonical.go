@@ -24,13 +24,13 @@ type CanonicalPayload struct {
 
 // BuildCanonicalPayload constructs a canonical payload from an HTTP request
 // This payload will be signed/verified using P-256 ECDSA signatures
+// Note: If LimitBody middleware is used, body is already buffered on r.Body
 func BuildCanonicalPayload(r *http.Request) (*CanonicalPayload, []byte, error) {
-	// Read the request body
+	// Read body from request (LimitBody middleware buffers it on r.Body)
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to read request body: %w", err)
 	}
-
 	// Restore the body for subsequent handlers
 	r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 

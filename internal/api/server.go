@@ -89,10 +89,12 @@ func (s *Server) Start() error {
 
 	v1Mux.Handle("/v1/condition_sets/", http.HandlerFunc(s.handleConditionSetOperations))
 
-	v1Handler := s.appAuthMiddleware.Authenticate(
-		s.userAuthMiddleware.Authenticate(
-			s.requireUserMiddleware(
-				s.idempotencyMiddleware.Handle(v1Mux),
+	v1Handler := middleware.LimitBody(
+		s.appAuthMiddleware.Authenticate(
+			s.userAuthMiddleware.Authenticate(
+				s.requireUserMiddleware(
+					s.idempotencyMiddleware.Handle(v1Mux),
+				),
 			),
 		),
 	)

@@ -198,7 +198,7 @@ func TestWalletLifecycle_UserOwned(t *testing.T) {
 		// Build and sign canonical payload
 		canonicalPayload := buildCanonicalPayload(
 			"POST",
-			fmt.Sprintf("/v1/wallets/%s/sign", walletID),
+			fmt.Sprintf("/v1/wallets/%s/rpc", walletID),
 			string(bodyBytes),
 			map[string]string{
 				"x-app-id":          ctx.AppID.String(),
@@ -411,7 +411,7 @@ func TestSessionSignerFlow(t *testing.T) {
 		// Signed by SESSION SIGNER, not owner
 		canonicalPayload := buildCanonicalPayload(
 			"POST",
-			fmt.Sprintf("/v1/wallets/%s/sign", walletID),
+			fmt.Sprintf("/v1/wallets/%s/rpc", walletID),
 			string(bodyBytes),
 			map[string]string{
 				"x-app-id":          ctx.AppID.String(),

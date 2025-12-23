@@ -4,25 +4,31 @@ Detailed guide to signing Ethereum transactions with Better Wallet.
 
 ## Transaction Types
 
+All signing operations use the unified `/rpc` endpoint with JSON-RPC 2.0 format.
+
 ### EIP-1559 Transactions (Recommended)
 
 Modern transaction format with dynamic fee market:
 
 ```bash
-curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/sign" \
+curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/rpc" \
   -H "X-App-Id: $APP_ID" \
   -H "X-App-Secret: $APP_SECRET" \
   -H "Authorization: Bearer $JWT" \
   -H "Content-Type: application/json" \
   -d '{
-    "to": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
-    "value": "1000000000000000000",
-    "chain_id": 1,
-    "nonce": 0,
-    "gas_limit": 21000,
-    "gas_fee_cap": "30000000000",
-    "gas_tip_cap": "2000000000",
-    "data": ""
+    "jsonrpc": "2.0",
+    "method": "eth_sendTransaction",
+    "params": [{
+      "to": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+      "value": "0xde0b6b3a7640000",
+      "chain_id": 1,
+      "nonce": "0x0",
+      "gas_limit": "0x5208",
+      "max_fee_per_gas": "0x6fc23ac00",
+      "max_priority_fee_per_gas": "0x77359400"
+    }],
+    "id": 1
   }'
 ```
 
@@ -31,16 +37,20 @@ curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/sign" \
 For networks without EIP-1559 support:
 
 ```bash
-curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/sign" \
+curl -X POST "http://localhost:8080/v1/wallets/$WALLET_ID/rpc" \
   -H "..." \
   -d '{
-    "to": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
-    "value": "1000000000000000000",
-    "chain_id": 1,
-    "nonce": 0,
-    "gas_limit": 21000,
-    "gas_price": "20000000000",
-    "data": ""
+    "jsonrpc": "2.0",
+    "method": "eth_sendTransaction",
+    "params": [{
+      "to": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb",
+      "value": "0xde0b6b3a7640000",
+      "chain_id": 1,
+      "nonce": "0x0",
+      "gas_limit": "0x5208",
+      "gas_price": "0x4a817c800"
+    }],
+    "id": 1
   }'
 ```
 
@@ -177,18 +187,23 @@ const data = iface.encodeFunctionData('transfer', [
 ]);
 
 // Sign with Better Wallet
-const signedTx = await fetch('/v1/wallets/' + walletId + '/sign', {
+const signedTx = await fetch('/v1/wallets/' + walletId + '/rpc', {
   method: 'POST',
   headers: { ... },
   body: JSON.stringify({
-    to: USDC_ADDRESS,
-    value: '0',
-    chain_id: 1,
-    nonce: await getNonce(walletAddress),
-    gas_limit: 65000,
-    gas_fee_cap: '30000000000',
-    gas_tip_cap: '2000000000',
-    data: data
+    jsonrpc: '2.0',
+    method: 'eth_sendTransaction',
+    params: [{
+      to: USDC_ADDRESS,
+      value: '0x0',
+      chain_id: 1,
+      nonce: '0x' + (await getNonce(walletAddress)).toString(16),
+      gas_limit: '0xfde8',
+      max_fee_per_gas: '0x6fc23ac00',
+      max_priority_fee_per_gas: '0x77359400',
+      data: data
+    }],
+    id: 1
   })
 });
 ```

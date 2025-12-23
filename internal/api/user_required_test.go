@@ -59,7 +59,7 @@ func TestRequireUserMiddleware(t *testing.T) {
 	})
 
 	t.Run("requires user for other wallet operations", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/v1/wallets/11111111-1111-1111-1111-111111111111/sign", nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/wallets/11111111-1111-1111-1111-111111111111", nil)
 		rec := httptest.NewRecorder()
 
 		handler.ServeHTTP(rec, req)
