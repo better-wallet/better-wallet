@@ -201,7 +201,7 @@ func (s *Server) handleGetWallet(w http.ResponseWriter, r *http.Request, walletI
 		return
 	}
 
-	response := convertWalletToResponse(wallet)
+	response := convertWalletToResponse(r.Context(), s.store, wallet)
 	s.writeJSON(w, http.StatusOK, response)
 }
 
@@ -253,7 +253,7 @@ func (s *Server) handleListWallets(w http.ResponseWriter, r *http.Request) {
 	// Convert to response
 	data := make([]WalletResponse, len(wallets))
 	for i, w := range wallets {
-		data[i] = convertWalletToResponse(w)
+		data[i] = convertWalletToResponse(r.Context(), s.store, w)
 	}
 
 	response := ListWalletsResponse{
@@ -366,7 +366,7 @@ func (s *Server) handleCreateWallet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := convertWalletToResponse(createResult.Wallet)
+	response := convertWalletToResponse(r.Context(), s.store, createResult.Wallet)
 	s.writeJSON(w, http.StatusCreated, response)
 }
 
@@ -434,7 +434,7 @@ func (s *Server) handleUpdateWallet(w http.ResponseWriter, r *http.Request, wall
 		return
 	}
 
-	response := convertWalletToResponse(wallet)
+	response := convertWalletToResponse(r.Context(), s.store, wallet)
 	s.writeJSON(w, http.StatusOK, response)
 }
 
@@ -598,7 +598,7 @@ func (s *Server) verifySignatureAgainstPublicKey(r *http.Request, publicKeyHex s
 
 // Helper functions
 
-func convertWalletToResponse(w *types.Wallet) WalletResponse {
+func convertWalletToResponse(ctx context.Context, store *storage.Store, w *types.Wallet) WalletResponse {
 	resp := WalletResponse{
 		ID:                w.ID,
 		Address:           w.Address,
@@ -612,7 +612,33 @@ func convertWalletToResponse(w *types.Wallet) WalletResponse {
 		resp.OwnerID = w.OwnerID
 	}
 
-	// TODO: Load policy IDs and additional signers from database
+	// Load policy IDs from database
+	policyRepo := storage.NewPolicyRepository(store)
+	policies, err := policyRepo.GetByWalletID(ctx, w.ID)
+	if err == nil && len(policies) > 0 {
+		resp.PolicyIDs = make([]uuid.UUID, len(policies))
+		for i, p := range policies {
+			resp.PolicyIDs[i] = p.ID
+		}
+	}
+
+	// Load active session signers
+	sessionRepo := storage.NewSessionSignerRepository(store)
+	sessionSigners, err := sessionRepo.GetActiveByWallet(ctx, w.ID, time.Now())
+	if err == nil && len(sessionSigners) > 0 {
+		resp.AdditionalSigners = make([]AdditionalSigner, len(sessionSigners))
+		for i, ss := range sessionSigners {
+			signerID, _ := uuid.Parse(ss.SignerID)
+			signer := AdditionalSigner{
+				SignerID: signerID,
+			}
+			// Add policy override IDs if present
+			if ss.PolicyOverrideID != nil {
+				signer.OverridePolicyIDs = []uuid.UUID{*ss.PolicyOverrideID}
+			}
+			resp.AdditionalSigners[i] = signer
+		}
+	}
 
 	return resp
 }

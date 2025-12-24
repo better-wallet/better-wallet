@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
+	"log"
 	"net/http"
 	"time"
 
@@ -147,7 +148,8 @@ func (m *IdempotencyMiddleware) Handle(next http.Handler) http.Handler {
 		if err != nil {
 			// Log error but don't fail the request
 			// The response has already been sent
-			// TODO: Add logging
+			log.Printf("Failed to store idempotency record: app_id=%s key=%s method=%s url=%s error=%v",
+				appID, scopedKey, r.Method, r.URL.Path, err)
 		}
 
 		// Response was already written by recorder

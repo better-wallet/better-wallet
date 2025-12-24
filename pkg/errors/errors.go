@@ -43,8 +43,9 @@ const (
 	ErrCodeInsufficientQuorum  = "insufficient_quorum"
 	ErrCodeKeyOperationFailed  = "key_operation_failed"
 	ErrCodeChainNotSupported   = "chain_not_supported"
-	ErrCodeTransactionFailed   = "transaction_failed"
+	ErrCodeTransactionFailed    = "transaction_failed"
 	ErrCodeIdempotencyKeyReused = "idempotency_key_reused"
+	ErrCodeNotImplemented       = "not_implemented"
 )
 
 // Predefined errors

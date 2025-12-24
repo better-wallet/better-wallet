@@ -11,7 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useSession } from '@/lib/auth/client'
+import { authClient, useSession } from '@/lib/auth/client'
 
 export default function SettingsPage() {
   const { data: session, isPending: sessionLoading } = useSession()
@@ -32,7 +32,15 @@ export default function SettingsPage() {
 
     setIsSaving(true)
     try {
-      // TODO: Implement user update API
+      // Update user name using Better Auth client API
+      const { error } = await authClient.updateUser({
+        name: name.trim(),
+      })
+
+      if (error) {
+        throw new Error(error.message || 'Failed to update profile')
+      }
+
       toast.success('Profile updated')
       setIsEditing(false)
     } catch {

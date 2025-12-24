@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math/big"
 	"net/http"
 	"strings"
@@ -332,8 +333,23 @@ func (s *Server) handleEthSendTransaction(
 		return
 	}
 
-	// TODO: If sponsor=true, submit transaction to network
-	// For now, just return the signed transaction
+	// TODO: Gas sponsorship is not yet implemented.
+	// True gas sponsorship requires either:
+	// - Meta-transactions (EIP-2771) with a relayer that pays gas
+	// - Account Abstraction (EIP-4337) with a Paymaster contract
+	// - A server-side sponsored account that wraps user intents
+	// For now, reject sponsor=true requests explicitly.
+	if p.Sponsor {
+		s.writeError(w, apperrors.NewWithDetail(
+			apperrors.ErrCodeNotImplemented,
+			"Gas sponsorship not implemented",
+			"The sponsor=true option is not yet supported. Please submit the signed transaction yourself.",
+			http.StatusNotImplemented,
+		))
+		return
+	}
+
+	txHash := signedTx.Hash().Hex()
 
 	// Encode signed transaction
 	txBytes, err := signedTx.MarshalBinary()
@@ -357,7 +373,6 @@ func (s *Server) handleEthSendTransaction(
 	gasLimitVal := int64(gasLimit)
 	maxFeeStr := gasFeeCap.String()
 	maxPriorityStr := gasTipCap.String()
-	txHash := signedTx.Hash().Hex()
 
 	txRecord := &storage.Transaction{
 		ID:                   txID,
@@ -378,7 +393,8 @@ func (s *Server) handleEthSendTransaction(
 
 	if err := txRepo.Create(r.Context(), txRecord); err != nil {
 		// Log error but don't fail the request
-		// TODO: Add logging
+		log.Printf("Failed to create transaction record: wallet_id=%s tx_hash=%s error=%v",
+			walletID.String(), txHash, err)
 	}
 
 	response := RPCResponse{
@@ -627,3 +643,4 @@ func convertTypes(types map[string][]TypeField) map[string]interface{} {
 	}
 	return result
 }
+
