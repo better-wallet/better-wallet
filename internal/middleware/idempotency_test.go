@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -75,70 +74,43 @@ func TestWriteError(t *testing.T) {
 func TestResponseRecorder(t *testing.T) {
 	t.Run("captures status code", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		recorder := &responseRecorder{
-			ResponseWriter: w,
-			statusCode:     http.StatusOK,
-			body:           &bytes.Buffer{},
-			headers:        make(http.Header),
-		}
+		recorder := NewResponseRecorder(w)
 
 		recorder.WriteHeader(http.StatusCreated)
-		assert.Equal(t, http.StatusCreated, recorder.statusCode)
-		assert.True(t, recorder.written)
+		assert.Equal(t, http.StatusCreated, recorder.StatusCode)
 	})
 
 	t.Run("captures body", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		recorder := &responseRecorder{
-			ResponseWriter: w,
-			statusCode:     http.StatusOK,
-			body:           &bytes.Buffer{},
-			headers:        make(http.Header),
-		}
+		recorder := NewResponseRecorder(w)
 
 		n, err := recorder.Write([]byte("test response body"))
 		require.NoError(t, err)
 		assert.Equal(t, 18, n)
-		assert.Equal(t, "test response body", recorder.body.String())
+		assert.Equal(t, "test response body", recorder.Body.String())
 	})
 
 	t.Run("Write sets default status code if not written", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		recorder := &responseRecorder{
-			ResponseWriter: w,
-			statusCode:     http.StatusOK,
-			body:           &bytes.Buffer{},
-			headers:        make(http.Header),
-		}
+		recorder := NewResponseRecorder(w)
 
 		recorder.Write([]byte("data"))
-		assert.True(t, recorder.written)
-		assert.Equal(t, http.StatusOK, recorder.statusCode)
+		assert.Equal(t, http.StatusOK, recorder.StatusCode)
 	})
 
 	t.Run("WriteHeader is idempotent", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		recorder := &responseRecorder{
-			ResponseWriter: w,
-			statusCode:     http.StatusOK,
-			body:           &bytes.Buffer{},
-			headers:        make(http.Header),
-		}
+		recorder := NewResponseRecorder(w)
 
 		recorder.WriteHeader(http.StatusCreated)
 		recorder.WriteHeader(http.StatusBadRequest) // Should be ignored
 
-		assert.Equal(t, http.StatusCreated, recorder.statusCode)
+		assert.Equal(t, http.StatusCreated, recorder.StatusCode)
 	})
 
 	t.Run("Header returns underlying header", func(t *testing.T) {
 		w := httptest.NewRecorder()
-		recorder := &responseRecorder{
-			ResponseWriter: w,
-			statusCode:     http.StatusOK,
-			body:           &bytes.Buffer{},
-			headers:        make(http.Header),
-		}
+		recorder := NewResponseRecorder(w)
 
 		recorder.Header().Set("X-Test", "value")
 		assert.Equal(t, "value", w.Header().Get("X-Test"))
@@ -149,15 +121,10 @@ func TestResponseRecorder(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-Custom", "header-value")
 
-		recorder := &responseRecorder{
-			ResponseWriter: w,
-			statusCode:     http.StatusOK,
-			body:           &bytes.Buffer{},
-			headers:        make(http.Header),
-		}
+		recorder := NewResponseRecorder(w)
 
 		recorder.Write([]byte("data"))
-		assert.NotEmpty(t, recorder.headers)
+		assert.NotEmpty(t, recorder.Headers)
 	})
 }
 
@@ -400,6 +367,46 @@ func TestIdempotencyMiddleware_ReplaysCachedResponse(t *testing.T) {
 	require.Equal(t, 1, callCount, "handler should not be called on replay")
 	require.Equal(t, "true", rec2.Header().Get("X-Idempotency-Replay"))
 	require.Equal(t, rec1.Body.String(), rec2.Body.String())
+}
+
+func TestIdempotencyMiddleware_ReplayUsesCurrentRequestID(t *testing.T) {
+	repo := newFakeIdempotencyRepo()
+	idempotency := NewIdempotencyMiddleware(repo)
+
+	callCount := 0
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"count":` + fmt.Sprint(callCount) + `}`))
+	})
+
+	chain := RequestID(idempotency.Handle(handler))
+
+	req1 := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{"a":1}`))
+	req1.Header.Set("x-idempotency-key", "key-reqid")
+	req1.Header.Set("x-app-id", "app-1")
+	req1.Header.Set("X-Request-ID", "req-1")
+	rec1 := httptest.NewRecorder()
+
+	chain.ServeHTTP(rec1, req1)
+	require.Equal(t, http.StatusCreated, rec1.Code)
+	require.Equal(t, 1, callCount)
+	require.Equal(t, "req-1", rec1.Header().Get("X-Request-ID"))
+
+	req2 := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{"a":1}`))
+	req2.Header.Set("x-idempotency-key", "key-reqid")
+	req2.Header.Set("x-app-id", "app-1")
+	req2.Header.Set("X-Request-ID", "req-2")
+	rec2 := httptest.NewRecorder()
+
+	chain.ServeHTTP(rec2, req2)
+	require.Equal(t, http.StatusCreated, rec2.Code)
+	require.Equal(t, 1, callCount, "handler should not be called on replay")
+	require.Equal(t, "true", rec2.Header().Get("X-Idempotency-Replay"))
+
+	values := rec2.Header().Values("X-Request-ID")
+	require.Equal(t, []string{"req-2"}, values)
 }
 
 func TestIdempotencyMiddleware_RejectsDifferentBodySameKey(t *testing.T) {

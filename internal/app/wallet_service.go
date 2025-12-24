@@ -13,6 +13,7 @@ import (
 
 	internalcrypto "github.com/better-wallet/better-wallet/internal/crypto"
 	"github.com/better-wallet/better-wallet/internal/keyexec"
+	"github.com/better-wallet/better-wallet/internal/logger"
 	"github.com/better-wallet/better-wallet/internal/middleware"
 	"github.com/better-wallet/better-wallet/internal/policy"
 	"github.com/better-wallet/better-wallet/internal/storage"
@@ -122,6 +123,13 @@ type AdditionalSigner struct {
 func (s *WalletService) CreateWallet(ctx context.Context, req *CreateWalletRequest) (*CreateWalletResponse, error) {
 	// Get AppID from context for multi-tenant isolation
 	appID, _ := storage.GetAppID(ctx)
+
+	logger.Debug(ctx, "creating wallet",
+		"chain_type", req.ChainType,
+		"exec_backend", req.ExecBackend,
+		"has_owner", req.OwnerID != nil || req.OwnerPublicKey != "",
+		"policy_count", len(req.PolicyIDs),
+	)
 
 	// Get or create user (optional for app-managed wallets)
 	var userID *uuid.UUID
@@ -328,6 +336,13 @@ func (s *WalletService) CreateWallet(ctx context.Context, req *CreateWalletReque
 		UserAgent:    middleware.GetUserAgent(ctx),
 	})
 
+	logger.Info(ctx, "wallet created",
+		"wallet_id", wallet.ID,
+		"address", wallet.Address,
+		"chain_type", wallet.ChainType,
+		"app_managed", IsAppManagedWallet(wallet),
+	)
+
 	return &CreateWalletResponse{
 		Wallet: wallet,
 	}, nil
@@ -376,6 +391,12 @@ type CreateSessionSignerRequest struct {
 
 // SignTransaction signs a transaction
 func (s *WalletService) SignTransaction(ctx context.Context, userSub string, req *SignTransactionRequest) (*ethtypes.Transaction, error) {
+	logger.Debug(ctx, "signing transaction",
+		"wallet_id", req.WalletID,
+		"to", req.To,
+		"chain_id", req.ChainID,
+	)
+
 	// Input validation
 	validationConfig := &validation.TransactionValidationConfig{
 		MaxValue:        nil,         // No global limit, policy engine will handle this
@@ -535,6 +556,12 @@ func (s *WalletService) SignTransaction(ctx context.Context, userSub string, req
 		return nil, fmt.Errorf("failed to evaluate policy: %w", err)
 	}
 
+	logger.Debug(ctx, "policy evaluated",
+		"wallet_id", req.WalletID,
+		"decision", result.Decision,
+		"policy_count", len(policies),
+	)
+
 	if result.Decision == policy.DecisionDeny {
 		// Audit the denial
 		policyResultStr := result.Reason
@@ -552,6 +579,11 @@ func (s *WalletService) SignTransaction(ctx context.Context, userSub string, req
 			log.SignerID = &matchedSignerID
 		}
 		s.auditRepo.Create(ctx, log)
+
+		logger.Warn(ctx, "transaction denied by policy",
+			"wallet_id", req.WalletID,
+			"reason", result.Reason,
+		)
 
 		return nil, apperrors.PolicyDenied(result.Reason)
 	}
@@ -622,6 +654,12 @@ func (s *WalletService) SignTransaction(ctx context.Context, userSub string, req
 		log.SignerID = &matchedSignerID
 	}
 	s.auditRepo.Create(ctx, log)
+
+	logger.Info(ctx, "transaction signed",
+		"wallet_id", req.WalletID,
+		"tx_hash", txHashStr,
+		"chain_id", req.ChainID,
+	)
 
 	return signedTx, nil
 }
@@ -1489,6 +1527,11 @@ type SignMessageRequest struct {
 
 // SignMessage signs an arbitrary message with the wallet's private key using EIP-191 personal_sign
 func (s *WalletService) SignMessage(ctx context.Context, userSub string, req *SignMessageRequest) (string, error) {
+	logger.Debug(ctx, "signing message",
+		"wallet_id", req.WalletID,
+		"encoding", req.Encoding,
+	)
+
 	// Get wallet (automatically scoped to app_id from context)
 	wallet, err := s.walletRepo.GetByID(ctx, req.WalletID)
 	if err != nil {
@@ -1641,6 +1684,10 @@ func (s *WalletService) SignMessage(ctx context.Context, userSub string, req *Si
 		UserAgent:    middleware.GetUserAgent(ctx),
 	})
 
+	logger.Info(ctx, "message signed",
+		"wallet_id", req.WalletID,
+	)
+
 	return sigStr, nil
 }
 
@@ -1662,6 +1709,11 @@ type SignTypedDataRequest struct {
 
 // SignTypedData signs EIP-712 typed data, enforcing ownership, authorization signatures, and policies.
 func (s *WalletService) SignTypedData(ctx context.Context, userSub string, req *SignTypedDataRequest) (string, error) {
+	logger.Debug(ctx, "signing typed data",
+		"wallet_id", req.WalletID,
+		"primary_type", req.TypedData.PrimaryType,
+	)
+
 	// Get wallet (automatically scoped to app_id from context)
 	wallet, err := s.walletRepo.GetByID(ctx, req.WalletID)
 	if err != nil {
@@ -1815,6 +1867,11 @@ func (s *WalletService) SignTypedData(ctx context.Context, userSub string, req *
 		log.SignerID = &matchedSignerID
 	}
 	s.auditRepo.Create(ctx, log)
+
+	logger.Info(ctx, "typed data signed",
+		"wallet_id", req.WalletID,
+		"primary_type", req.TypedData.PrimaryType,
+	)
 
 	// Format signature as hex string (0x-prefixed)
 	return formatSignature(signature), nil

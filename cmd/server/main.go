@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -13,6 +13,7 @@ import (
 	"github.com/better-wallet/better-wallet/internal/app"
 	"github.com/better-wallet/better-wallet/internal/config"
 	"github.com/better-wallet/better-wallet/internal/keyexec"
+	"github.com/better-wallet/better-wallet/internal/logger"
 	"github.com/better-wallet/better-wallet/internal/middleware"
 	"github.com/better-wallet/better-wallet/internal/policy"
 	"github.com/better-wallet/better-wallet/internal/storage"
@@ -25,30 +26,36 @@ func main() {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
+	if err := logger.Init(); err != nil {
+		log.Fatalf("Failed to initialize logger: %v", err)
+	}
+
 	// Initialize database
 	store, err := storage.New(cfg.PostgresDSN)
 	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
+		slog.Error("failed to connect to database", "error", err)
+		os.Exit(1)
 	}
 	defer store.Close()
 
-	fmt.Println("Connected to database successfully")
+	slog.Info("connected to database")
 
 	// Initialize key executor based on backend type
 	var keyExec keyexec.KeyExecutor
 	switch cfg.ExecutionBackend {
 	case "kms":
 		keyExec, err = keyexec.NewKMSExecutor(&keyexec.KMSConfig{
-			Provider:        cfg.KMSProvider,
+			Provider:          cfg.KMSProvider,
 			LocalMasterKeyHex: cfg.KMSLocalMasterKey,
-			AWSKMSKeyID:    cfg.KMSAWSKeyID,
-			AWSKMSRegion:   cfg.KMSAWSRegion,
-			VaultAddress:   cfg.KMSVaultAddress,
-			VaultToken:     cfg.KMSVaultToken,
-			VaultTransitKey: cfg.KMSVaultTransitKey,
+			AWSKMSKeyID:       cfg.KMSAWSKeyID,
+			AWSKMSRegion:      cfg.KMSAWSRegion,
+			VaultAddress:      cfg.KMSVaultAddress,
+			VaultToken:        cfg.KMSVaultToken,
+			VaultTransitKey:   cfg.KMSVaultTransitKey,
 		})
 		if err != nil {
-			log.Fatalf("Failed to initialize KMS executor: %v", err)
+			slog.Error("failed to initialize KMS executor", "error", err)
+			os.Exit(1)
 		}
 	case "tee":
 		keyExec, err = keyexec.NewTEEExecutor(&keyexec.TEEConfig{
@@ -58,13 +65,15 @@ func main() {
 			MasterKeyHex: cfg.TEEMasterKeyHex,
 		})
 		if err != nil {
-			log.Fatalf("Failed to initialize TEE executor: %v", err)
+			slog.Error("failed to initialize TEE executor", "error", err)
+			os.Exit(1)
 		}
 	default:
-		log.Fatalf("Unknown execution backend: %s", cfg.ExecutionBackend)
+		slog.Error("unknown execution backend", "backend", cfg.ExecutionBackend)
+		os.Exit(1)
 	}
 
-	fmt.Printf("Initialized %s key executor\n", cfg.ExecutionBackend)
+	slog.Info("initialized key executor", "backend", cfg.ExecutionBackend)
 
 	// Initialize policy engine
 	policyEngine := policy.NewEngine()
@@ -94,10 +103,11 @@ func main() {
 	// Wait for either server error or shutdown signal
 	select {
 	case err := <-serverErrors:
-		log.Fatalf("Server error: %v", err)
+		slog.Error("server error", "error", err)
+		os.Exit(1)
 
 	case sig := <-shutdown:
-		fmt.Printf("\nReceived signal %v, starting graceful shutdown...\n", sig)
+		slog.Info("received shutdown signal", "signal", sig.String())
 
 		// Create a context with timeout for shutdown
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -105,10 +115,10 @@ func main() {
 
 		// Attempt graceful shutdown
 		if err := server.Shutdown(ctx); err != nil {
-			log.Printf("Error during shutdown: %v", err)
-			log.Printf("Forcing shutdown...")
+			slog.Error("error during shutdown", "error", err)
+			slog.Warn("forcing shutdown")
 		}
 
-		fmt.Println("Server stopped")
+		slog.Info("server stopped")
 	}
 }

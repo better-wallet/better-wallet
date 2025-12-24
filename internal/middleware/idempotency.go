@@ -6,10 +6,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
-	"log"
 	"net/http"
 	"time"
 
+	"github.com/better-wallet/better-wallet/internal/logger"
 	"github.com/better-wallet/better-wallet/internal/storage"
 	"github.com/better-wallet/better-wallet/pkg/errors"
 )
@@ -121,12 +121,7 @@ func (m *IdempotencyMiddleware) Handle(next http.Handler) http.Handler {
 		}
 
 		// Key doesn't exist - capture and store response
-		recorder := &responseRecorder{
-			ResponseWriter: w,
-			statusCode:     http.StatusOK,
-			body:           &bytes.Buffer{},
-			headers:        make(http.Header),
-		}
+		recorder := NewResponseRecorder(w)
 
 		// Call next handler
 		next.ServeHTTP(recorder, r)
@@ -139,17 +134,21 @@ func (m *IdempotencyMiddleware) Handle(next http.Handler) http.Handler {
 			URL:        r.URL.Path,
 			Key:        scopedKey,
 			BodyHash:   bodyHash,
-			StatusCode: recorder.statusCode,
-			Headers:    recorder.headers,
-			Body:       recorder.body.Bytes(),
+			StatusCode: recorder.StatusCode,
+			Headers:    recorder.Headers,
+			Body:       recorder.Body.Bytes(),
 			ExpiresAt:  expiresAt,
 		})
 
 		if err != nil {
-			// Log error but don't fail the request
-			// The response has already been sent
-			log.Printf("Failed to store idempotency record: app_id=%s key=%s method=%s url=%s error=%v",
-				appID, scopedKey, r.Method, r.URL.Path, err)
+			// Log error but don't fail the request - response already sent
+			logger.Error(r.Context(), "failed to store idempotency record",
+				"app_id", appID,
+				"key", scopedKey,
+				"method", r.Method,
+				"url", r.URL.Path,
+				"error", err,
+			)
 		}
 
 		// Response was already written by recorder
@@ -161,11 +160,21 @@ func (m *IdempotencyMiddleware) returnCachedResponse(
 	w http.ResponseWriter,
 	record *storage.IdempotencyRecord,
 ) {
-	// Copy headers
+	// Preserve the current request ID (set by the RequestID middleware) so we
+	// don't replay a stale value from the cached response.
+	currentRequestID := w.Header().Get("X-Request-ID")
+
+	// Copy cached headers.
 	for key, values := range record.Headers {
 		for _, value := range values {
 			w.Header().Add(key, value)
 		}
+	}
+
+	// Ensure the response X-Request-ID matches the current request.
+	w.Header().Del("X-Request-ID")
+	if currentRequestID != "" {
+		w.Header().Set("X-Request-ID", currentRequestID)
 	}
 
 	// Add idempotency replay header
@@ -176,49 +185,6 @@ func (m *IdempotencyMiddleware) returnCachedResponse(
 
 	// Write body
 	w.Write(record.Body)
-}
-
-// responseRecorder captures the response for storage
-type responseRecorder struct {
-	http.ResponseWriter
-	statusCode int
-	body       *bytes.Buffer
-	headers    http.Header
-	written    bool
-}
-
-// WriteHeader captures the status code
-func (r *responseRecorder) WriteHeader(statusCode int) {
-	if !r.written {
-		r.statusCode = statusCode
-		r.written = true
-	}
-	r.ResponseWriter.WriteHeader(statusCode)
-}
-
-// Write captures the response body
-func (r *responseRecorder) Write(b []byte) (int, error) {
-	if !r.written {
-		r.WriteHeader(http.StatusOK)
-	}
-
-	// Copy to buffer
-	r.body.Write(b)
-
-	// Copy headers before first write
-	if r.body.Len() == len(b) {
-		for key, values := range r.ResponseWriter.Header() {
-			r.headers[key] = values
-		}
-	}
-
-	// Write to actual response
-	return r.ResponseWriter.Write(b)
-}
-
-// Header returns the header map
-func (r *responseRecorder) Header() http.Header {
-	return r.ResponseWriter.Header()
 }
 
 // computeBodyHash creates a SHA-256 hash of the request body

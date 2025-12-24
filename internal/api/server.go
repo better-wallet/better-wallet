@@ -3,11 +3,13 @@ package api
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/better-wallet/better-wallet/internal/config"
+	"github.com/better-wallet/better-wallet/internal/logger"
 	"github.com/better-wallet/better-wallet/internal/middleware"
 	"github.com/better-wallet/better-wallet/internal/storage"
 	"github.com/better-wallet/better-wallet/pkg/crypto"
@@ -102,14 +104,14 @@ func (s *Server) Start() error {
 
 	s.httpServer = &http.Server{
 		Addr: fmt.Sprintf(":%d", s.config.Port),
-		// Chain middleware: AuditContext -> Logging -> Routes
-		Handler:      middleware.AuditContext(s.loggingMiddleware(rootMux)),
+		// Chain middleware: RequestID -> AuditContext -> Logging -> Routes
+		Handler:      middleware.RequestID(middleware.AuditContext(s.loggingMiddleware(rootMux))),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
 	}
 
-	fmt.Printf("Starting server on port %d...\n", s.config.Port)
+	slog.Info("starting server", "port", s.config.Port)
 	return s.httpServer.ListenAndServe()
 }
 
@@ -161,15 +163,23 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return s.httpServer.Shutdown(ctx)
 }
 
-// loggingMiddleware logs HTTP requests
+// loggingMiddleware logs HTTP requests with structured logging
 func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		fmt.Printf("%s %s - started\n", r.Method, r.URL.Path)
+		log := logger.FromContext(r.Context())
 
-		next.ServeHTTP(w, r)
+		// Wrap response writer to capture status code
+		rw := middleware.NewStatusRecorder(w)
 
-		fmt.Printf("%s %s - completed in %v\n", r.Method, r.URL.Path, time.Since(start))
+		next.ServeHTTP(rw, r)
+
+		log.Info("http_request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", rw.StatusCode,
+			"duration_ms", time.Since(start).Milliseconds(),
+		)
 	})
 }
 
