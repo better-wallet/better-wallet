@@ -1,6 +1,7 @@
 'use client'
 
 import { usePathname } from 'next/navigation'
+import { useEffect } from 'react'
 import { AppSidebar } from '@/components/layout/app-sidebar'
 import { UserNav } from '@/components/layout/user-nav'
 import { Separator } from '@/components/ui/separator'
@@ -22,15 +23,23 @@ export function DashboardShell({ user, children }: DashboardShellProps) {
   const pathname = usePathname()
   const { data: session } = useSession()
 
-  // Check if we're in admin or app route
-  const isAdminRoute = pathname.startsWith('/admin')
-  const appIdMatch = pathname.match(/^\/apps\/([^/]+)/)
-  const currentAppId = appIdMatch ? appIdMatch[1] : undefined
+  // Ensure principal exists for current user
+  const principalMutation = trpc.principals.getOrCreate.useMutation()
 
-  // Fetch app data if we're in an app route
-  const { data: app } = trpc.apps.get.useQuery(
-    { id: currentAppId! },
-    { enabled: !!currentAppId && currentAppId !== 'new' }
+  useEffect(() => {
+    // Create principal on first load if needed
+    principalMutation.mutate()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Check if we're in admin or wallet route
+  const isAdminRoute = pathname.startsWith('/admin')
+  const walletIdMatch = pathname.match(/^\/wallets\/([^/]+)/)
+  const currentWalletId = walletIdMatch ? walletIdMatch[1] : undefined
+
+  // Fetch wallet data if we're in a wallet route
+  const { data: wallet } = trpc.wallets.get.useQuery(
+    { id: currentWalletId! },
+    { enabled: !!currentWalletId && currentWalletId !== 'new' }
   )
 
   // Check if user has provider/admin role
@@ -38,13 +47,13 @@ export function DashboardShell({ user, children }: DashboardShellProps) {
   const isAdmin = isProvider(userRole)
 
   // Determine header title
-  const headerTitle = isAdminRoute ? 'Admin Console' : app?.name
+  const headerTitle = isAdminRoute ? 'Admin Console' : wallet?.name
 
   return (
     <SidebarProvider>
       <AppSidebar
-        currentAppId={currentAppId !== 'new' ? currentAppId : undefined}
-        currentAppName={app?.name}
+        currentWalletId={currentWalletId !== 'new' ? currentWalletId : undefined}
+        currentWalletName={wallet?.name}
         isAdmin={isAdmin}
         isAdminRoute={isAdminRoute}
       />

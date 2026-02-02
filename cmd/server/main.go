@@ -124,6 +124,7 @@ func main() {
 
 	// Initialize API server
 	server := api.NewServer(cfg, agentService, principalAuthMiddleware, agentAuthMiddleware)
+	server.SetStore(store)
 
 	// Start server in a goroutine
 	serverErrors := make(chan error, 1)

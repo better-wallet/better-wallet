@@ -1,6 +1,6 @@
 'use client'
 
-import { ArrowLeftRight, BarChart3, Building2, Cog, FileText, FlaskConical, Key, LayoutDashboard, Plus, Shield, UserCircle, Users, Wallet } from 'lucide-react'
+import { ArrowLeftRight, Cog, FileText, Key, LayoutDashboard, Plus, Shield, Wallet } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
@@ -18,97 +18,57 @@ import {
 } from '@/components/ui/sidebar'
 
 interface AppSidebarProps {
-  currentAppId?: string
-  currentAppName?: string
+  currentWalletId?: string
+  currentWalletName?: string
   isAdmin?: boolean
   isAdminRoute?: boolean
 }
 
-export function AppSidebar({ currentAppId, currentAppName, isAdmin, isAdminRoute }: AppSidebarProps) {
+export function AppSidebar({ currentWalletId, currentWalletName, isAdmin, isAdminRoute }: AppSidebarProps) {
   const pathname = usePathname()
 
-  // Global nav items (when no app is selected)
+  // Global nav items
   const globalNavItems = [
     {
-      title: 'Apps',
-      url: '/apps',
-      icon: Building2,
+      title: 'Wallets',
+      url: '/wallets',
+      icon: Wallet,
+    },
+    {
+      title: 'API Keys',
+      url: '/api-keys',
+      icon: Key,
+    },
+    {
+      title: 'Audit Log',
+      url: '/audit',
+      icon: FileText,
     },
   ]
 
-  // App-specific nav items
-  const appNavItems = currentAppId
+  // Wallet-specific nav items
+  const walletNavItems = currentWalletId
     ? [
         {
           title: 'Overview',
-          url: `/apps/${currentAppId}`,
+          url: `/wallets/${currentWalletId}`,
           icon: LayoutDashboard,
           exact: true,
         },
         {
-          title: 'Analytics',
-          url: `/apps/${currentAppId}/analytics`,
-          icon: BarChart3,
-        },
-        {
-          title: 'Wallets',
-          url: `/apps/${currentAppId}/wallets`,
-          icon: Wallet,
-        },
-        {
-          title: 'Transactions',
-          url: `/apps/${currentAppId}/transactions`,
-          icon: ArrowLeftRight,
-        },
-        {
-          title: 'Policies',
-          url: `/apps/${currentAppId}/policies`,
+          title: 'Credentials',
+          url: `/wallets/${currentWalletId}/credentials`,
           icon: Shield,
         },
         {
-          title: 'Policy Tester',
-          url: `/apps/${currentAppId}/policies/test`,
-          icon: FlaskConical,
-        },
-        {
-          title: 'Auth Keys',
-          url: `/apps/${currentAppId}/keys`,
-          icon: Key,
-        },
-        {
-          title: 'Condition Sets',
-          url: `/apps/${currentAppId}/condition-sets`,
-          icon: FileText,
-        },
-        {
-          title: 'Users',
-          url: `/apps/${currentAppId}/users`,
-          icon: UserCircle,
-        },
-      ]
-    : []
-
-  const appManagementItems = currentAppId
-    ? [
-        {
-          title: 'Members',
-          url: `/apps/${currentAppId}/members`,
-          icon: Users,
-        },
-        {
-          title: 'API Secrets',
-          url: `/apps/${currentAppId}/secrets`,
-          icon: Key,
+          title: 'Transactions',
+          url: `/wallets/${currentWalletId}/transactions`,
+          icon: ArrowLeftRight,
         },
         {
           title: 'Settings',
-          url: `/apps/${currentAppId}/settings`,
+          url: `/wallets/${currentWalletId}/settings`,
           icon: Cog,
-        },
-        {
-          title: 'Audit Log',
-          url: `/apps/${currentAppId}/audit`,
-          icon: FileText,
         },
       ]
     : []
@@ -121,18 +81,6 @@ export function AppSidebar({ currentAppId, currentAppName, isAdmin, isAdminRoute
           url: '/admin',
           icon: LayoutDashboard,
           exact: true,
-        },
-        {
-          title: 'All Apps',
-          url: '/admin/apps',
-          icon: Building2,
-          exact: false,
-        },
-        {
-          title: 'System Health',
-          url: '/admin/health',
-          icon: Cog,
-          exact: false,
         },
         {
           title: 'Configuration',
@@ -157,7 +105,7 @@ export function AppSidebar({ currentAppId, currentAppName, isAdmin, isAdminRoute
         <SidebarHeader className="border-b px-6 py-4">
           <Link href="/admin" className="flex items-center gap-2">
             <Wallet className="h-6 w-6" />
-            <span className="font-semibold text-lg">Better Wallet</span>
+            <span className="font-semibold text-lg">Agent Wallet</span>
           </Link>
         </SidebarHeader>
         <SidebarContent>
@@ -187,9 +135,9 @@ export function AppSidebar({ currentAppId, currentAppName, isAdmin, isAdminRoute
   return (
     <Sidebar>
       <SidebarHeader className="border-b px-6 py-4">
-        <Link href="/apps" className="flex items-center gap-2">
+        <Link href="/wallets" className="flex items-center gap-2">
           <Wallet className="h-6 w-6" />
-          <span className="font-semibold text-lg">Better Wallet</span>
+          <span className="font-semibold text-lg">Agent Wallet</span>
         </Link>
       </SidebarHeader>
       <SidebarContent>
@@ -209,9 +157,9 @@ export function AppSidebar({ currentAppId, currentAppName, isAdmin, isAdminRoute
               ))}
               <SidebarMenuItem>
                 <SidebarMenuButton asChild>
-                  <Link href="/apps/new" className="text-muted-foreground hover:text-foreground">
+                  <Link href="/wallets/new" className="text-muted-foreground hover:text-foreground">
                     <Plus className="h-4 w-4" />
-                    <span>Create App</span>
+                    <span>Create Wallet</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
@@ -219,37 +167,19 @@ export function AppSidebar({ currentAppId, currentAppName, isAdmin, isAdminRoute
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {/* Current App Navigation */}
-        {currentAppId && (
+        {/* Current Wallet Navigation */}
+        {currentWalletId && (
           <>
             <SidebarSeparator />
             <SidebarGroup>
-              <SidebarGroupLabel className="truncate" title={currentAppName}>
-                {currentAppName || 'Current App'}
+              <SidebarGroupLabel className="truncate" title={currentWalletName}>
+                {currentWalletName || 'Current Wallet'}
               </SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu>
-                  {appNavItems.map((item) => (
+                  {walletNavItems.map((item) => (
                     <SidebarMenuItem key={item.title}>
                       <SidebarMenuButton asChild isActive={isActive(item.url, item.exact)}>
-                        <Link href={item.url}>
-                          <item.icon className="h-4 w-4" />
-                          <span>{item.title}</span>
-                        </Link>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  ))}
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-
-            <SidebarGroup>
-              <SidebarGroupLabel>App Management</SidebarGroupLabel>
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  {appManagementItems.map((item) => (
-                    <SidebarMenuItem key={item.title}>
-                      <SidebarMenuButton asChild isActive={isActive(item.url)}>
                         <Link href={item.url}>
                           <item.icon className="h-4 w-4" />
                           <span>{item.title}</span>

@@ -42,7 +42,14 @@ type Config struct {
 	TEEAttestationRequired bool   // Require attestation verification
 
 	// Server
-	Port int
+	Port           int
+	Version        string   // Application version
+	AllowedOrigins []string // CORS allowed origins
+
+	// Rate Limiting
+	RateLimitEnabled bool // Enable rate limiting enforcement
+	RateLimitRPS     int  // Requests per second per IP
+	RateLimitBurst   int  // Burst size for rate limiter
 }
 
 // Load loads configuration from environment variables
@@ -64,6 +71,11 @@ func Load() (*Config, error) {
 		TEEMasterKeyHex:        getEnv("TEE_MASTER_KEY_HEX", ""),
 		TEEAttestationRequired: getEnvBool("TEE_ATTESTATION_REQUIRED", false),
 		Port:                   getEnvInt("PORT", 8080),
+		Version:                getEnv("VERSION", "dev"),
+		AllowedOrigins:         getEnvSlice("ALLOWED_ORIGINS", []string{}),
+		RateLimitEnabled:       getEnvBool("RATE_LIMIT_ENABLED", true),
+		RateLimitRPS:           getEnvInt("RATE_LIMIT_RPS", 100),
+		RateLimitBurst:         getEnvInt("RATE_LIMIT_BURST", 200),
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -164,4 +176,21 @@ func getEnvBool(key string, defaultValue bool) bool {
 	}
 	valueStr = strings.ToLower(valueStr)
 	return valueStr == "true" || valueStr == "1" || valueStr == "yes"
+}
+
+// getEnvSlice gets a comma-separated environment variable as a slice
+func getEnvSlice(key string, defaultValue []string) []string {
+	valueStr := os.Getenv(key)
+	if valueStr == "" {
+		return defaultValue
+	}
+	parts := strings.Split(valueStr, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
 }

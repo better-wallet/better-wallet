@@ -66,9 +66,9 @@ export function UserNav({ user, isAdminRoute }: UserNavProps) {
             <span>Settings</span>
           </DropdownMenuItem>
           {isAdmin && (
-            <DropdownMenuItem onClick={() => router.push(isAdminRoute ? '/apps' : '/admin')}>
+            <DropdownMenuItem onClick={() => router.push(isAdminRoute ? '/wallets' : '/admin')}>
               <Shield className="mr-2 h-4 w-4" />
-              <span>{isAdminRoute ? 'Back to Apps' : 'Admin Console'}</span>
+              <span>{isAdminRoute ? 'Back to Wallets' : 'Admin Console'}</span>
             </DropdownMenuItem>
           )}
         </DropdownMenuGroup>

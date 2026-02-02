@@ -1,0 +1,760 @@
+openapi: 3.1.0
+info:
+  title: Agent Wallet API
+  description: |
+    API for managing AI agent wallets and signing operations.
+
+    ## Authentication
+
+    The API uses two types of authentication:
+
+    ### Principal API Keys
+    Used by humans/organizations to manage wallets and credentials.
+    - Header: `Authorization: Bearer <principal_api_key>`
+    - Endpoints: `/v1/wallets`, `/v1/credentials`
+
+    ### Agent Credentials
+    Used by AI agents to request signing operations.
+    - Header: `Authorization: Bearer <credential_prefix>.<credential_secret>`
+    - Endpoints: `/v1/agent/rpc`
+
+  version: 1.0.0
+  contact:
+    name: Better Wallet
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+  - url: https://api.example.com
+    description: Production
+
+tags:
+  - name: Health
+    description: Health check endpoints
+  - name: Principals
+    description: Principal registration
+  - name: Wallets
+    description: Wallet management
+  - name: Credentials
+    description: Agent credential management
+  - name: Agent RPC
+    description: Agent signing operations (JSON-RPC)
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Basic health check
+      operationId: getHealth
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /ready:
+    get:
+      tags: [Health]
+      summary: Readiness probe (Kubernetes)
+      operationId: getReady
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadyResponse'
+        '503':
+          description: Service is not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadyResponse'
+
+  /live:
+    get:
+      tags: [Health]
+      summary: Liveness probe (Kubernetes)
+      operationId: getLive
+      responses:
+        '200':
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /metrics:
+    get:
+      tags: [Health]
+      summary: Prometheus metrics
+      operationId: getMetrics
+      responses:
+        '200':
+          description: Prometheus metrics
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /v1/principals:
+    post:
+      tags: [Principals]
+      summary: Register a new principal
+      operationId: createPrincipal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePrincipalRequest'
+      responses:
+        '201':
+          description: Principal created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreatePrincipalResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Principal already exists
+
+  /v1/wallets:
+    get:
+      tags: [Wallets]
+      summary: List all wallets
+      operationId: listWallets
+      security:
+        - PrincipalAuth: []
+      responses:
+        '200':
+          description: List of wallets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Wallet'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags: [Wallets]
+      summary: Create a new wallet
+      operationId: createWallet
+      security:
+        - PrincipalAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWalletRequest'
+      responses:
+        '201':
+          description: Wallet created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wallet'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /v1/wallets/{walletId}:
+    get:
+      tags: [Wallets]
+      summary: Get wallet details
+      operationId: getWallet
+      security:
+        - PrincipalAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WalletId'
+      responses:
+        '200':
+          description: Wallet details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wallet'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/wallets/{walletId}/pause:
+    post:
+      tags: [Wallets]
+      summary: Pause a wallet
+      operationId: pauseWallet
+      security:
+        - PrincipalAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WalletId'
+      responses:
+        '200':
+          description: Wallet paused
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wallet'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/wallets/{walletId}/resume:
+    post:
+      tags: [Wallets]
+      summary: Resume a paused wallet
+      operationId: resumeWallet
+      security:
+        - PrincipalAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WalletId'
+      responses:
+        '200':
+          description: Wallet resumed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wallet'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/wallets/{walletId}/kill:
+    post:
+      tags: [Wallets]
+      summary: Kill a wallet (permanent)
+      operationId: killWallet
+      security:
+        - PrincipalAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WalletId'
+      responses:
+        '200':
+          description: Wallet killed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wallet'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/wallets/{walletId}/credentials:
+    get:
+      tags: [Credentials]
+      summary: List credentials for a wallet
+      operationId: listCredentials
+      security:
+        - PrincipalAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WalletId'
+      responses:
+        '200':
+          description: List of credentials
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Credential'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    post:
+      tags: [Credentials]
+      summary: Create a new credential
+      operationId: createCredential
+      security:
+        - PrincipalAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WalletId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCredentialRequest'
+      responses:
+        '201':
+          description: Credential created (includes secret - shown only once)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateCredentialResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/credentials/{credentialId}/pause:
+    post:
+      tags: [Credentials]
+      summary: Pause a credential
+      operationId: pauseCredential
+      security:
+        - PrincipalAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CredentialId'
+      responses:
+        '200':
+          description: Credential paused
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Credential'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/credentials/{credentialId}/resume:
+    post:
+      tags: [Credentials]
+      summary: Resume a paused credential
+      operationId: resumeCredential
+      security:
+        - PrincipalAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CredentialId'
+      responses:
+        '200':
+          description: Credential resumed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Credential'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/credentials/{credentialId}/revoke:
+    post:
+      tags: [Credentials]
+      summary: Revoke a credential (permanent)
+      operationId: revokeCredential
+      security:
+        - PrincipalAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CredentialId'
+      responses:
+        '200':
+          description: Credential revoked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Credential'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/agent/rpc:
+    post:
+      tags: [Agent RPC]
+      summary: JSON-RPC endpoint for agent signing operations
+      operationId: agentRpc
+      security:
+        - AgentAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JsonRpcRequest'
+            examples:
+              eth_accounts:
+                summary: Get wallet address
+                value:
+                  jsonrpc: "2.0"
+                  method: eth_accounts
+                  params: []
+                  id: 1
+              personal_sign:
+                summary: Sign a message
+                value:
+                  jsonrpc: "2.0"
+                  method: personal_sign
+                  params: ["0x48656c6c6f", "0x..."]
+                  id: 2
+              eth_signTypedData_v4:
+                summary: Sign typed data (EIP-712)
+                value:
+                  jsonrpc: "2.0"
+                  method: eth_signTypedData_v4
+                  params: ["0x...", "{...}"]
+                  id: 3
+              eth_sendTransaction:
+                summary: Send a transaction
+                value:
+                  jsonrpc: "2.0"
+                  method: eth_sendTransaction
+                  params: [{"to": "0x...", "value": "0x0", "data": "0x..."}]
+                  id: 4
+      responses:
+        '200':
+          description: JSON-RPC response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonRpcResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Forbidden (credential paused, wallet killed, etc.)
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+components:
+  securitySchemes:
+    PrincipalAuth:
+      type: http
+      scheme: bearer
+      description: Principal API key for management operations
+
+    AgentAuth:
+      type: http
+      scheme: bearer
+      description: Agent credential (format prefix.secret) for signing operations
+
+  parameters:
+    WalletId:
+      name: walletId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Wallet UUID
+
+    CredentialId:
+      name: credentialId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Credential UUID
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    RateLimited:
+      description: Rate limit exceeded
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+          description: Seconds to wait before retrying
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    Error:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              message:
+                type: string
+
+    HealthResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum: [ok, alive]
+        version:
+          type: string
+        uptime:
+          type: string
+
+    ReadyResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum: [ready, not_ready]
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+
+    CreatePrincipalRequest:
+      type: object
+      required:
+        - name
+        - email
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        email:
+          type: string
+          format: email
+
+    CreatePrincipalResponse:
+      type: object
+      required:
+        - principal
+        - api_key
+      properties:
+        principal:
+          $ref: '#/components/schemas/Principal'
+        api_key:
+          type: string
+          description: API key (shown only once)
+
+    Principal:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        email:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    CreateWalletRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        chain_type:
+          type: string
+          enum: [evm]
+          default: evm
+
+    Wallet:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        chain_type:
+          type: string
+        address:
+          type: string
+        status:
+          type: string
+          enum: [active, paused, killed]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateCredentialRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        capabilities:
+          $ref: '#/components/schemas/Capabilities'
+        limits:
+          $ref: '#/components/schemas/Limits'
+
+    Capabilities:
+      type: object
+      properties:
+        chains:
+          type: array
+          items:
+            type: integer
+          description: Allowed chain IDs (empty = all)
+        operations:
+          type: array
+          items:
+            type: string
+            enum: [transfer, sign_message, sign_typed_data, contract_deploy]
+          description: Allowed operations (empty = all)
+        allowed_contracts:
+          type: array
+          items:
+            type: string
+          description: Allowed contract addresses (empty = all)
+        allowed_methods:
+          type: array
+          items:
+            type: string
+          description: Allowed contract methods (empty = all)
+
+    Limits:
+      type: object
+      properties:
+        max_value_per_tx:
+          type: string
+          description: Maximum value per transaction (wei)
+        max_value_per_hour:
+          type: string
+          description: Maximum value per hour (wei)
+        max_value_per_day:
+          type: string
+          description: Maximum value per day (wei)
+        max_tx_per_hour:
+          type: integer
+          description: Maximum transactions per hour
+        max_tx_per_day:
+          type: integer
+          description: Maximum transactions per day
+
+    CreateCredentialResponse:
+      type: object
+      required:
+        - credential
+        - secret
+      properties:
+        credential:
+          $ref: '#/components/schemas/Credential'
+        secret:
+          type: string
+          description: Credential secret (shown only once)
+
+    Credential:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        wallet_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        key_prefix:
+          type: string
+        capabilities:
+          $ref: '#/components/schemas/Capabilities'
+        limits:
+          $ref: '#/components/schemas/Limits'
+        status:
+          type: string
+          enum: [active, paused, revoked]
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    JsonRpcRequest:
+      type: object
+      required:
+        - jsonrpc
+        - method
+        - id
+      properties:
+        jsonrpc:
+          type: string
+          enum: ["2.0"]
+        method:
+          type: string
+          enum:
+            - eth_accounts
+            - eth_chainId
+            - personal_sign
+            - eth_signTypedData_v4
+            - eth_sendTransaction
+            - eth_getBalance
+            - eth_getTransactionCount
+        params:
+          type: array
+          items: {}
+        id:
+          oneOf:
+            - type: integer
+            - type: string
+
+    JsonRpcResponse:
+      type: object
+      required:
+        - jsonrpc
+        - id
+      properties:
+        jsonrpc:
+          type: string
+          enum: ["2.0"]
+        result:
+          description: Result on success
+        error:
+          type: object
+          properties:
+            code:
+              type: integer
+            message:
+              type: string
+            data:
+              description: Additional error data
+        id:
+          oneOf:
+            - type: integer
+            - type: string

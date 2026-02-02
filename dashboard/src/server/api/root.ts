@@ -1,18 +1,22 @@
+import { principalsRouter } from './routers/principals'
+import { agentWalletsRouter } from './routers/agent-wallets'
+import { agentCredentialsRouter } from './routers/agent-credentials'
+import { principalApiKeysRouter } from './routers/principal-api-keys'
+import { agentAuditRouter } from './routers/agent-audit'
+import { agentTransactionsRouter } from './routers/agent-transactions'
 import { adminRouter } from './routers/admin'
-import { appMembersRouter } from './routers/app-members'
-import { appSecretsRouter } from './routers/app-secrets'
-import { appsRouter } from './routers/apps'
-import { backendRouter } from './routers/backend'
 import { createCallerFactory, createTRPCRouter } from './trpc'
 
 export const appRouter = createTRPCRouter({
-  // Dashboard-managed resources
-  apps: appsRouter,
-  appSecrets: appSecretsRouter,
-  appMembers: appMembersRouter,
+  // Principal management
+  principals: principalsRouter,
 
-  // Backend-managed resources (proxied to Go API)
-  backend: backendRouter,
+  // Agent Wallet resources
+  wallets: agentWalletsRouter,
+  credentials: agentCredentialsRouter,
+  apiKeys: principalApiKeysRouter,
+  audit: agentAuditRouter,
+  transactions: agentTransactionsRouter,
 
   // Admin-only operations
   admin: adminRouter,

@@ -31,7 +31,7 @@ export default function LoginPage() {
       if (result.error) {
         setError(result.error.message || 'Login failed')
       } else {
-        router.push('/apps')
+        router.push('/wallets')
       }
     } catch (err) {
       setError('An unexpected error occurred')
@@ -43,7 +43,7 @@ export default function LoginPage() {
   const handleOAuthLogin = async (provider: 'github' | 'google') => {
     setError('')
     try {
-      await signIn.social({ provider, callbackURL: '/apps' })
+      await signIn.social({ provider, callbackURL: '/wallets' })
     } catch (err) {
       setError('OAuth login failed')
     }
@@ -70,7 +70,7 @@ export default function LoginPage() {
         return
       }
 
-      router.push('/apps')
+      router.push('/wallets')
       router.refresh()
     } catch (err) {
       setError('Dev login failed')
