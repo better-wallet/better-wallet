@@ -1,4 +1,4 @@
-import { bigint, boolean, integer, jsonb, pgTable, primaryKey, serial, text, timestamp, uuid } from 'drizzle-orm/pg-core'
+import { bigint, boolean, index, integer, jsonb, pgTable, primaryKey, serial, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core'
 
 // ==================== Principal Tables ====================
 
@@ -25,7 +25,9 @@ export const principalApiKeys = pgTable('principal_api_keys', {
   lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   revokedAt: timestamp('revoked_at', { withTimezone: true }),
-})
+}, (table) => [
+  index('principal_api_keys_principal_id_idx').on(table.principalId),
+])
 
 // ==================== Agent Wallet Tables ====================
 
@@ -33,7 +35,7 @@ export const agentWallets = pgTable('agent_wallets', {
   id: uuid('id').primaryKey().defaultRandom(),
   principalId: uuid('principal_id')
     .notNull()
-    .references(() => principals.id, { onDelete: 'restrict' }),
+    .references(() => principals.id, { onDelete: 'cascade' }),
   name: text('name').notNull(),
   chainType: text('chain_type').notNull().default('ethereum'),
   address: text('address').notNull(),
@@ -41,7 +43,10 @@ export const agentWallets = pgTable('agent_wallets', {
   status: text('status').notNull().default('active'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-})
+}, (table) => [
+  unique().on(table.address, table.chainType),
+  index('agent_wallets_principal_id_idx').on(table.principalId),
+])
 
 export const walletKeys = pgTable('wallet_keys', {
   walletId: uuid('wallet_id')
@@ -69,7 +74,9 @@ export const agentCredentials = pgTable('agent_credentials', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   pausedAt: timestamp('paused_at', { withTimezone: true }),
   revokedAt: timestamp('revoked_at', { withTimezone: true }),
-})
+}, (table) => [
+  index('agent_credentials_wallet_id_idx').on(table.walletId),
+])
 
 export interface AgentCapabilities {
   chains: string[]
@@ -98,7 +105,9 @@ export const agentPolicies = pgTable('agent_policies', {
   rules: jsonb('rules').notNull().$type<PolicyRules>(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-})
+}, (table) => [
+  index('agent_policies_wallet_id_idx').on(table.walletId),
+])
 
 export interface PolicyRule {
   name: string
@@ -172,7 +181,10 @@ export const agentTransactions = pgTable('agent_transactions', {
   errorMessage: text('error_message'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-})
+}, (table) => [
+  index('agent_transactions_wallet_id_idx').on(table.walletId),
+  index('agent_transactions_credential_id_idx').on(table.credentialId),
+])
 
 // ==================== Type Exports ====================
 
