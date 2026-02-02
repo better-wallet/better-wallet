@@ -1,370 +1,365 @@
-# Better Wallet
+# Better Wallet - Agent Wallet
 
-**Better Wallet** is an open-source, self-hosted, modular key management and wallet infrastructure for blockchain applications. Built with Go, it provides enterprise-grade security with a focus on simplicity and ease of deployment.
+**Better Wallet** is an open-source, self-hosted wallet infrastructure for **AI Agents**. It provides secure, controlled on-chain execution where agents can only request signing, never control private keys.
 
-## 🎯 Key Features
+> Secure, controlled on-chain execution for AI Agents. Agents can only request, never control.
 
-- **Self-Hosted First**: Complete control over your infrastructure and data
-- **Authentication Agnostic**: Integrates with any OIDC/JWT provider (Auth0, Better Auth, custom IdP, etc.)
-- **Dual Key Management**: KMS/Vault (default) or TEE (Trusted Execution Environment) for enhanced security
-- **Policy Engine**: Flexible, rule-based access control with default-deny semantics
-- **EVM Support**: Built-in Ethereum and EVM-compatible chain support
-- **Open Source**: MIT licensed, fully auditable code
+## Key Features
 
-## 🏗️ Architecture
+- **Agent-First Design**: Built specifically for AI agent scenarios, not end-user wallets
+- **Principal Control**: Humans/organizations maintain ultimate control over agent wallets
+- **Capability-Based Security**: Fine-grained permissions with operations, contract allowlists, and rate limits
+- **Kill Switch**: Instantly revoke agent access when needed
+- **Self-Hosted**: Complete control over your infrastructure and data
+- **EVM Compatible**: Supports all EVM-compatible chains (Ethereum, Polygon, Arbitrum, Base, etc.)
 
-Better Wallet follows a clean, layered monolithic architecture:
+## Architecture
 
 ```
-┌─────────────────────────────────────┐
-│      REST API (Interface Layer)     │
-│   Authentication & Validation        │
-└──────────────┬──────────────────────┘
-               │
-┌──────────────▼──────────────────────┐
-│     Application Layer                │
-│  Wallet Operations, Session Mgmt     │
-└──────┬───────────────────┬──────────┘
-       │                   │
-┌──────▼────────┐   ┌──────▼──────────┐
-│ Policy Engine │   │ Key Exec Layer  │
-│ Rule Eval     │   │ KMS/TEE         │
-└───────────────┘   └─────────────────┘
-       │                   │
-┌──────▼───────────────────▼──────────┐
-│     Persistence (PostgreSQL)         │
-└──────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                   Principal (Human/Org)                      │
+│               - Creates Agent Wallets                        │
+│               - Grants Agent Credentials                     │
+│               - Monitors & Kill Switch                       │
+└─────────────────────┬───────────────────────────────────────┘
+                      │ API Key (aw_pk_xxx.secret)
+                      ▼
+┌─────────────────────────────────────────────────────────────┐
+│                  Agent Wallet Service                        │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
+│  │ Rate Limit  │  │ Capability  │  │ Signing Service     │  │
+│  │ Enforcement │  │ Checking    │  │ (KMS/TEE)           │  │
+│  └─────────────┘  └─────────────┘  └─────────────────────┘  │
+└─────────────────────┬───────────────────────────────────────┘
+                      │ Agent Credential (aw_ag_xxx.secret)
+                      ▼
+┌─────────────────────────────────────────────────────────────┐
+│                       AI Agent                               │
+│               - Holds Agent Credential                       │
+│               - Calls JSON-RPC signing API                   │
+│               - Never has access to private keys             │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-## 🚀 Quick Start
+## Core Concepts
+
+### Three Core Entities
+
+| Entity | Description |
+|--------|-------------|
+| **Principal** | Human or organization that owns wallets. Authenticates with API Key. |
+| **Agent Wallet** | Blockchain wallet owned by a Principal. Private key protected by KMS/TEE. |
+| **Agent Credential** | Capability token granted to an AI agent with specific permissions and limits. |
+
+### Security Model
+
+1. **Separation** — Agent runtime and signing service are completely isolated
+2. **Least Privilege** — Agent Credential grants only necessary capabilities
+3. **Default Deny** — Any operation not explicitly allowed is denied
+4. **Auditable** — All operations recorded with full context
+5. **Revocable** — Principal can revoke agent permissions instantly
+
+## Quick Start
 
 ### Prerequisites
 
 - Go 1.21+
 - PostgreSQL 15+
-- An OIDC/JWT authentication provider
 
 ### Installation
 
-1. **Clone the repository**
 ```bash
+# Clone the repository
 git clone https://github.com/better-wallet/better-wallet.git
 cd better-wallet
-```
 
-2. **Set up the database**
-```bash
-# Create a PostgreSQL database
+# Set up the database
 createdb better_wallet
+cd dashboard && bun install && bun run db:push && cd ..
 
-# Set up Dashboard and push schema
-cd dashboard
-bun install
-DATABASE_URL=postgres://user:pass@localhost:5432/better_wallet bun run db:push
-cd ..
-```
-
-3. **Configure environment variables**
-
-Create `.env` for the Go backend:
-```env
-# Database
+# Configure environment
+cat > .env << EOF
 POSTGRES_DSN=postgres://user:pass@localhost:5432/better_wallet?sslmode=disable
-
-# Key Execution Backend
 EXECUTION_BACKEND=kms
-KMS_KEY_ID=your-master-key-id
+KMS_PROVIDER=local
+KMS_MASTER_KEY=$(openssl rand -hex 32)
+RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY
+EOF
 
-# Server
-PORT=8080
+# Build and run
+go build -o bin/server ./cmd/server
+./bin/server
 ```
 
-Create `dashboard/.env` for the Dashboard:
-```env
-DATABASE_URL=postgres://user:pass@localhost:5432/better_wallet?sslmode=disable
-```
-
-4. **Build and run**
-```bash
-# Install dependencies
-go mod download
-
-# Build
-go build -o bin/better-wallet ./cmd/server
-
-# Run
-./bin/better-wallet
-```
-
-The server will start on `http://localhost:8080`.
-
-## 📖 API Documentation
+## API Reference
 
 ### Authentication
 
-All API endpoints (except `/health`) require **App authentication**:
-
+**Principal API** (wallet management):
 ```
-X-App-Id: <app_id>
-X-App-Secret: <app_secret>
+Authorization: Bearer aw_pk_<prefix>.<secret>
 ```
 
-Treat `X-App-Secret` as a long-lived credential and ensure it is never logged. The server strips
-`X-App-Secret` (and user `Authorization` tokens) from requests after authentication.
-
-Many endpoints that operate on **user-owned** resources also require a user JWT:
-
+**Agent API** (signing operations):
 ```
-Authorization: Bearer <your-jwt-token>
+Authorization: Bearer aw_ag_<prefix>.<secret>
 ```
 
-By default, `/v1/*` endpoints require a user JWT. The server only allows app-only calls for:
+### Principal Endpoints
 
-- `POST /v1/wallets` (create app-managed wallets)
-- `POST /v1/policies` (create app-owned policies)
-- `POST /v1/wallets/{wallet_id}/rpc` (requires an authorization signature)
-
-### Authorization Signatures (Canonical JSON)
-
-Certain privileged operations require an additional request signature:
-
-- `PATCH /v1/wallets/{wallet_id}`
-- `DELETE /v1/wallets/{wallet_id}`
-- `PATCH /v1/policies/{policy_id}`
-- `DELETE /v1/policies/{policy_id}`
-- `PATCH /v1/key-quorums/{key_quorum_id}`
-- `DELETE /v1/key-quorums/{key_quorum_id}`
-- `POST /v1/wallets/{wallet_id}/rpc`
-
-Header:
-
-```
-X-Authorization-Signature: <sig>[,<sig>...]
-```
-
-The signature is a base64-encoded P-256 ECDSA signature over an RFC 8785 canonical JSON payload:
-
-```json
-{
-  "version": "v1",
-  "method": "POST",
-  "url": "https://your-api.example.com/v1/wallets/<id>/rpc",
-  "body": "{...raw request body...}",
-  "headers": {
-    "x-app-id": "<app_id>",
-    "x-idempotency-key": "<optional>"
-  }
-}
-```
-
-Note: set `BETTER_WALLET_CANONICAL_URL_MODE=relative` to use `url` as path-only (legacy mode).
-
-### Endpoints
-
-#### Health Check
-```
-GET /health
-```
-
-#### Create Wallet
-```
-POST /v1/wallets
+#### Create Agent Wallet
+```http
+POST /api/wallets
+Authorization: Bearer aw_pk_xxx.secret
 Content-Type: application/json
 
 {
-  "chain_type": "ethereum",
-  "exec_backend": "kms"
+  "name": "Trading Bot Wallet",
+  "chain_type": "evm"
 }
 
 Response:
 {
   "id": "uuid",
   "address": "0x...",
-  "chain_type": "ethereum",
-  "created_at": "2025-01-01T00:00:00Z"
+  "name": "Trading Bot Wallet",
+  "chain_type": "evm",
+  "status": "active"
 }
 ```
 
-#### List Wallets
-```
-GET /v1/wallets
-
-Response:
-[
-  {
-    "id": "uuid",
-    "address": "0x...",
-    "chain_type": "ethereum",
-    "created_at": "2025-01-01T00:00:00Z"
-  }
-]
-```
-
-#### Sign Transaction (JSON-RPC)
-```
-POST /v1/wallets/{wallet_id}/rpc
+#### Create Agent Credential
+```http
+POST /api/wallets/{wallet_id}/credentials
+Authorization: Bearer aw_pk_xxx.secret
 Content-Type: application/json
 
+{
+  "name": "DeFi Trading Agent",
+  "capabilities": {
+    "operations": ["transfer", "sign_message", "sign_typed_data"],
+    "allowed_contracts": ["0x...uniswap", "0x...aave"]
+  },
+  "limits": {
+    "max_value_per_tx": "1000000000000000000",
+    "max_value_per_hour": "5000000000000000000",
+    "max_value_per_day": "10000000000000000000",
+    "max_tx_per_hour": 100,
+    "max_tx_per_day": 1000
+  }
+}
+
+Response:
+{
+  "id": "uuid",
+  "credential": "aw_ag_xxxxxxxxxxxx.yyyyyyyyyyyyyyyy",
+  "name": "DeFi Trading Agent",
+  "capabilities": {...},
+  "limits": {...},
+  "status": "active"
+}
+```
+
+#### Control Agent
+```http
+POST /api/credentials/{credential_id}/pause    # Pause (can resume)
+POST /api/credentials/{credential_id}/resume   # Resume
+POST /api/credentials/{credential_id}/revoke   # Permanent revocation
+
+POST /api/wallets/{wallet_id}/kill             # Kill switch - blocks ALL credentials
+```
+
+### Agent Signing API (JSON-RPC)
+
+```http
+POST /agent/rpc
+Authorization: Bearer aw_ag_xxx.secret
+Content-Type: application/json
+```
+
+#### eth_sendTransaction
+```json
 {
   "jsonrpc": "2.0",
   "method": "eth_sendTransaction",
   "params": [{
     "to": "0x...",
     "value": "0xde0b6b3a7640000",
-    "chain_id": 1,
-    "nonce": "0x0",
-    "gas_limit": "0x5208",
-    "max_fee_per_gas": "0x6fc23ac00",
-    "max_priority_fee_per_gas": "0x77359400"
+    "data": "0x...",
+    "chainId": "0x1"
   }],
   "id": 1
 }
+```
 
-Response:
+#### eth_signTransaction
+```json
 {
   "jsonrpc": "2.0",
-  "result": {
-    "tx_hash": "0x...",
-    "signed_transaction": "0x..."
+  "method": "eth_signTransaction",
+  "params": [{
+    "to": "0x...",
+    "value": "0xde0b6b3a7640000",
+    "data": "0x...",
+    "chainId": "0x1"
+  }],
+  "id": 1
+}
+```
+
+#### personal_sign
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "personal_sign",
+  "params": ["0x48656c6c6f", "0x...address"],
+  "id": 1
+}
+```
+
+#### eth_signTypedData_v4
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "eth_signTypedData_v4",
+  "params": ["0x...address", {
+    "types": {...},
+    "primaryType": "...",
+    "domain": {...},
+    "message": {...}
+  }],
+  "id": 1
+}
+```
+
+#### eth_accounts
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "eth_accounts",
+  "params": [],
+  "id": 1
+}
+```
+
+#### eth_chainId
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "eth_chainId",
+  "params": [],
+  "id": 1
+}
+```
+
+### Capability Operations
+
+| Operation | Description |
+|-----------|-------------|
+| `transfer` | Send ETH/tokens via eth_sendTransaction |
+| `sign_message` | Sign messages via personal_sign |
+| `sign_typed_data` | Sign EIP-712 typed data |
+| `contract_deploy` | Deploy contracts (empty `to` address) |
+| `swap` | Reserved for DEX operations |
+| `*` | Wildcard - all operations allowed |
+
+### Rate Limits
+
+| Limit | Description |
+|-------|-------------|
+| `max_value_per_tx` | Maximum wei per transaction |
+| `max_value_per_hour` | Maximum wei per rolling hour |
+| `max_value_per_day` | Maximum wei per rolling day |
+| `max_tx_per_hour` | Maximum transactions per hour |
+| `max_tx_per_day` | Maximum transactions per day |
+
+### Error Responses
+
+```json
+{
+  "jsonrpc": "2.0",
+  "error": {
+    "code": -32000,
+    "message": "Rate limit exceeded: daily transaction limit",
+    "data": {"code": "RATE_LIMIT_EXCEEDED"}
   },
   "id": 1
 }
 ```
 
-Supported JSON-RPC methods: `eth_sendTransaction`, `eth_signTransaction`, `eth_signTypedData_v4`, `personal_sign`
+| Code | Message |
+|------|---------|
+| -32600 | Invalid Request |
+| -32601 | Method not found |
+| -32602 | Invalid params |
+| -32000 | Operation not allowed / Rate limit exceeded |
 
-## 🔐 Security Model
+## Environment Variables
 
-### Key Management
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `POSTGRES_DSN` | Yes | PostgreSQL connection string |
+| `EXECUTION_BACKEND` | Yes | `kms` or `tee` |
+| `KMS_PROVIDER` | If kms | `local`, `aws`, or `vault` |
+| `KMS_MASTER_KEY` | If local | 32-byte hex master key |
+| `RPC_URL` | No | EVM RPC URL for chain operations |
+| `PORT` | No | Server port (default: 8080) |
 
-Better Wallet uses a **2-of-2 key splitting** approach:
-
-- **Auth Share**: Encrypted and stored in PostgreSQL
-- **Exec Share**: Managed by the execution backend (KMS/TEE)
-
-Keys are only reconstructed in memory during signing operations and immediately cleared afterward.
-
-### Policy Engine
-
-The policy engine enforces access control with:
-
-- **Default Deny**: All actions are denied unless explicitly allowed
-- **Rule-based Evaluation**: Policies define rules with conditions
-- **Audit Trail**: All policy decisions are logged
-
-Example policy structure:
-```json
-{
-  "rules": [
-    {
-      "action": "sign_transaction",
-      "conditions": [
-        {
-          "type": "max_value",
-          "value": "1000000000000000000"
-        },
-        {
-          "type": "address_whitelist",
-          "addresses": ["0x..."]
-        }
-      ]
-    }
-  ]
-}
-```
-
-## 🛠️ Development
-
-### Project Structure
+## Project Structure
 
 ```
 better-wallet/
-├── cmd/
-│   └── server/          # Main application entry point
-├── dashboard/           # Next.js dashboard (manages DB schema)
-│   └── src/server/db/   # Drizzle schema (single source of truth)
+├── cmd/server/           # Main application entry point
+├── dashboard/            # Next.js dashboard (DB schema management)
 ├── internal/
-│   ├── api/             # HTTP handlers and server
-│   ├── app/             # Application/business logic layer
-│   ├── config/          # Configuration management
-│   ├── crypto/          # Cryptographic utilities
-│   ├── keyexec/         # Key execution backends (KMS/TEE)
-│   ├── middleware/      # HTTP middleware (auth, logging)
-│   ├── policy/          # Policy engine
-│   └── storage/         # Database repositories
-├── pkg/
-│   ├── errors/          # Error definitions
-│   └── types/           # Shared type definitions
-└── docs/                # Documentation
+│   ├── api/              # HTTP handlers (REST + JSON-RPC)
+│   ├── app/              # Business logic (AgentService)
+│   ├── config/           # Configuration
+│   ├── crypto/           # Cryptographic utilities
+│   ├── eth/              # EVM RPC client
+│   ├── keyexec/          # Key execution backends (KMS/TEE)
+│   ├── middleware/       # Auth middleware (Principal/Agent)
+│   └── storage/          # Database repositories
+├── pkg/types/            # Shared type definitions
+├── tests/
+│   ├── integration/      # Integration tests
+│   └── security/         # Security tests
+└── docs/                 # Documentation
 ```
 
-### Running Tests
+## Running Tests
 
 ```bash
+# Unit tests
 go test ./...
+
+# Integration tests
+go test -tags=integration ./tests/integration/...
+
+# Security tests
+go test -tags=security ./tests/security/...
+
+# All tests
+go test ./... && go test -tags=integration,security ./tests/...
 ```
 
-### Database Schema
+## Security Considerations
 
-The database schema is managed by Drizzle in the `dashboard/` project. To update the schema:
+- **Private keys never leave KMS/TEE** - Keys are protected by hardware security
+- **Agent credentials are bcrypt hashed** - Secrets stored securely
+- **Timing attack prevention** - Constant-time comparisons for auth
+- **Chain ID validation** - Prevents cross-chain transaction issues
+- **Contract allowlists** - Restrict which contracts agents can interact with
+- **Rate limiting** - Prevent runaway agents from draining wallets
 
-```bash
-cd dashboard
-
-# Push schema changes directly to database
-bun run db:push
-
-# Or generate migration files
-bun run db:generate
-
-# Open Drizzle Studio to view/edit data
-bun run db:studio
-```
-
-## 🗺️ Roadmap
-
-### ✅ Phase 1 - MVP (Current)
-- Go monolith + PostgreSQL
-- KMS/Vault execution backend
-- EVM support
-- REST API
-- Policy engine with rule-based access control
-- OIDC/JWT authentication
-- Complete audit logging
-
-### 🚧 Phase 2 - Enhanced Security
-- TEE backend (production-ready)
-- On-Device mode
-- Enhanced policies (ABI parsing, EIP-712 support)
-- Advanced recovery options
-- Performance optimizations and horizontal scaling
-
-### 📋 Phase 3 - Multi-Chain & Scale
-- Multi-chain support (Solana, Bitcoin, Cosmos)
-- Optional caching layer for high throughput
-- Advanced observability (OTLP, metrics, tracing)
-- Session signer management UI
-
-### 🎯 Phase 4 - Enterprise & Ecosystem
-- Account Abstraction / Paymaster integration
-- Developer SDKs (JavaScript, Python, Rust)
-- Admin UI and dashboard
-- Compliance modules (SOC 2, ISO 27001)
-- Optional managed SaaS offering
-
-## 📝 License
+## License
 
 Better Wallet is licensed under the [MIT License](LICENSE).
 
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
-## 🔗 Links
-
-- **Documentation**: [docs/](./docs)
-- **Issue Tracker**: [GitHub Issues](https://github.com/better-wallet/better-wallet/issues)
-
 ---
 
-Built with ❤️ by the Better Wallet Team
+Built for the AI Agent economy.
