@@ -9,6 +9,7 @@ This document provides a complete reference for all environment variables used t
 | `PORT` | No | `8080` | HTTP server port |
 | `POSTGRES_DSN` | Yes | - | PostgreSQL connection string |
 | `EXECUTION_BACKEND` | No | `kms` | Execution backend (`kms` or `tee`) |
+| `RPC_URL` | No | - | EVM RPC URL for chain operations |
 | `LOG_LEVEL` | No | `info` | Logging level (`debug`, `info`, `warn`, `error`) |
 
 ### Example
@@ -17,8 +18,21 @@ This document provides a complete reference for all environment variables used t
 PORT=8080
 POSTGRES_DSN=postgres://user:password@localhost:5432/better_wallet?sslmode=require
 EXECUTION_BACKEND=kms
+RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY
 LOG_LEVEL=info
 ```
+
+### RPC URL
+
+The `RPC_URL` is optional but enables:
+- Auto-fetching nonce, gas price, gas limit
+- `eth_chainId` and `eth_getBalance` methods
+- Transaction broadcasting via `eth_sendTransaction`
+
+If not configured:
+- Agents must provide `nonce`, `gas`, `gasPrice` in transaction params
+- `eth_chainId` and `eth_getBalance` will return errors
+- `eth_signTransaction` still works (returns signed tx without broadcasting)
 
 ## KMS Backend Configuration
 
@@ -156,17 +170,7 @@ DB_MAX_CONN_LIFETIME=30m
 
 ## Security Configuration
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `IDEMPOTENCY_TTL` | No | `24h` | Idempotency key expiration |
-| `JWT_CLOCK_SKEW` | No | `1m` | Allowed JWT clock skew |
-
-## Rate Limiting
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `RATE_LIMIT_ENABLED` | No | `false` | Enable rate limiting |
-| `RATE_LIMIT_QPS` | No | `100` | Default requests per second |
+Note: Agent Wallet uses API Key authentication (not JWT). Rate limits are configured per-credential, not globally.
 
 ## Logging
 
@@ -182,6 +186,7 @@ DB_MAX_CONN_LIFETIME=30m
 PORT=8080
 POSTGRES_DSN=postgres://bw_prod:${DB_PASSWORD}@db.internal:5432/better_wallet?sslmode=verify-full
 EXECUTION_BACKEND=kms
+RPC_URL=https://eth-mainnet.g.alchemy.com/v2/${ALCHEMY_KEY}
 LOG_LEVEL=info
 LOG_FORMAT=json
 
@@ -194,14 +199,6 @@ KMS_AWS_REGION=us-east-1
 DB_MAX_CONNECTIONS=100
 DB_MIN_CONNECTIONS=20
 DB_MAX_CONN_LIFETIME=30m
-
-# Security
-IDEMPOTENCY_TTL=24h
-JWT_CLOCK_SKEW=30s
-
-# Rate limiting
-RATE_LIMIT_ENABLED=true
-RATE_LIMIT_QPS=200
 ```
 
 ## Development Example
@@ -211,12 +208,13 @@ RATE_LIMIT_QPS=200
 PORT=8080
 POSTGRES_DSN=postgres://postgres:postgres@localhost:5432/better_wallet?sslmode=disable
 EXECUTION_BACKEND=kms
+RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
 LOG_LEVEL=debug
 LOG_FORMAT=text
 
 # Local KMS
 KMS_PROVIDER=local
-KMS_KEY_ID=dev-master-key-12345678901234567890123456789012
+KMS_MASTER_KEY=$(openssl rand -hex 32)
 ```
 
 ## Docker Compose Environment
@@ -229,7 +227,8 @@ services:
       - POSTGRES_DSN=postgres://postgres:postgres@db:5432/better_wallet?sslmode=disable
       - EXECUTION_BACKEND=kms
       - KMS_PROVIDER=local
-      - KMS_KEY_ID=${KMS_KEY_ID}
+      - KMS_MASTER_KEY=${KMS_MASTER_KEY}
+      - RPC_URL=${RPC_URL}
 ```
 
 ## Kubernetes ConfigMap/Secret
@@ -252,6 +251,7 @@ metadata:
 stringData:
   POSTGRES_DSN: "postgres://user:pass@host:5432/db"
   KMS_AWS_KEY_ID: "arn:aws:kms:..."
+  RPC_URL: "https://eth-mainnet.g.alchemy.com/v2/..."
 ```
 
 ## Validation
@@ -260,5 +260,5 @@ Better Wallet validates configuration at startup. Invalid configuration causes i
 
 ```
 Error: invalid configuration: POSTGRES_DSN is required
-Error: invalid configuration: KMS_KEY_ID must be 32 bytes for local provider
+Error: invalid configuration: KMS_MASTER_KEY is required for local provider
 ```

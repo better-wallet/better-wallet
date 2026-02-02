@@ -13,15 +13,42 @@ Better Wallet provides secure, controlled on-chain execution for AI Agents:
 - **Self-Hosted**: Complete control over your infrastructure and data
 - **EVM Compatible**: Supports all EVM-compatible chains
 
-## Quick Navigation
+## Documentation
 
-### Getting Started
+### Agent Wallet
 
 | Document | Description |
 |----------|-------------|
-| [Agent Wallet Overview](./agent-wallet/overview.md) | Core concepts and architecture |
-| [Quick Start](./agent-wallet/quickstart.md) | Get running in under 5 minutes |
+| [Overview](./agent-wallet/overview.md) | Core concepts, security model, capabilities |
+| [Quick Start](./agent-wallet/quickstart.md) | Get running in 5 minutes |
 | [API Reference](./agent-wallet/api-reference.md) | Complete API documentation |
+
+### Deployment
+
+| Document | Description |
+|----------|-------------|
+| [Overview](./deployment/overview.md) | Deployment options and requirements |
+| [Environment Variables](./deployment/environment-variables.md) | Configuration reference |
+| [Docker Compose](./deployment/docker-compose.md) | Docker deployment guide |
+| [Kubernetes](./deployment/kubernetes.md) | Kubernetes deployment guide |
+| [Bare Metal](./deployment/bare-metal.md) | Direct installation guide |
+| [TLS Configuration](./deployment/tls-configuration.md) | HTTPS setup |
+| [Monitoring](./deployment/monitoring.md) | Metrics and logging |
+| [Backup & Recovery](./deployment/backup-recovery.md) | Data protection |
+
+### Security
+
+| Document | Description |
+|----------|-------------|
+| [Architecture](./security/architecture.md) | Security model, key protection, threat model |
+
+### Contributing
+
+| Document | Description |
+|----------|-------------|
+| [Development Setup](./contributing/development-setup.md) | Local development guide |
+
+## Quick Navigation
 
 ### Core Concepts
 
@@ -39,166 +66,12 @@ Better Wallet provides secure, controlled on-chain execution for AI Agents:
 4. **Auditable** — All operations recorded with full context
 5. **Revocable** — Principal can revoke agent permissions instantly
 
-## Architecture
+### API Overview
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                   Principal (Human/Org)                      │
-│               - Creates Agent Wallets                        │
-│               - Grants Agent Credentials                     │
-│               - Monitors & Kill Switch                       │
-└─────────────────────┬───────────────────────────────────────┘
-                      │ API Key (aw_pk_xxx.secret)
-                      ▼
-┌─────────────────────────────────────────────────────────────┐
-│                  Agent Wallet Service                        │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
-│  │ Rate Limit  │  │ Capability  │  │ Signing Service     │  │
-│  │ Enforcement │  │ Checking    │  │ (KMS/TEE)           │  │
-│  └─────────────┘  └─────────────┘  └─────────────────────┘  │
-└─────────────────────┬───────────────────────────────────────┘
-                      │ Agent Credential (aw_ag_xxx.secret)
-                      ▼
-┌─────────────────────────────────────────────────────────────┐
-│                       AI Agent                               │
-│               - Holds Agent Credential                       │
-│               - Calls JSON-RPC signing API                   │
-│               - Never has access to private keys             │
-└─────────────────────────────────────────────────────────────┘
-```
-
-## API Overview
-
-### Two Authentication Contexts
-
-| Context | Header | Use Case |
-|---------|--------|----------|
-| **Principal API** | `Bearer aw_pk_xxx.secret` | Wallet management, credential creation, monitoring |
-| **Agent API** | `Bearer aw_ag_xxx.secret` | Signing operations (JSON-RPC) |
-
-### Principal Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/wallets` | POST | Create new agent wallet |
-| `/api/wallets` | GET | List wallets |
-| `/api/wallets/{id}` | GET | Get wallet details |
-| `/api/wallets/{id}/credentials` | POST | Create agent credential |
-| `/api/wallets/{id}/credentials` | GET | List credentials |
-| `/api/credentials/{id}/pause` | POST | Pause credential |
-| `/api/credentials/{id}/resume` | POST | Resume credential |
-| `/api/credentials/{id}/revoke` | POST | Revoke credential (permanent) |
-| `/api/wallets/{id}/kill` | POST | Kill switch - block all credentials |
-
-### Agent Signing API (JSON-RPC)
-
-| Method | Description |
-|--------|-------------|
-| `eth_sendTransaction` | Sign and broadcast transaction |
-| `eth_signTransaction` | Sign transaction (return raw) |
-| `personal_sign` | Sign message (EIP-191) |
-| `eth_signTypedData_v4` | Sign typed data (EIP-712) |
-| `eth_accounts` | Get wallet address |
-| `eth_chainId` | Get chain ID |
-| `eth_getBalance` | Get wallet balance |
-
-### Capability Operations
-
-| Operation | Description |
-|-----------|-------------|
-| `transfer` | Send ETH/tokens via eth_sendTransaction |
-| `sign_message` | Sign messages via personal_sign |
-| `sign_typed_data` | Sign EIP-712 typed data |
-| `contract_deploy` | Deploy contracts (empty `to` address) |
-| `swap` | Reserved for DEX operations |
-| `*` | Wildcard - all operations allowed |
-
-### Rate Limits
-
-| Limit | Description |
-|-------|-------------|
-| `max_value_per_tx` | Maximum wei per transaction |
-| `max_value_per_hour` | Maximum wei per rolling hour |
-| `max_value_per_day` | Maximum wei per rolling day |
-| `max_tx_per_hour` | Maximum transactions per hour |
-| `max_tx_per_day` | Maximum transactions per day |
-
-## Quick Start Example
-
-### 1. Principal creates a wallet
-
-```bash
-curl -X POST http://localhost:8080/api/wallets \
-  -H "Authorization: Bearer aw_pk_xxx.secret" \
-  -H "Content-Type: application/json" \
-  -d '{"name": "Trading Bot", "chain_type": "evm"}'
-```
-
-### 2. Principal creates an agent credential
-
-```bash
-curl -X POST http://localhost:8080/api/wallets/{wallet_id}/credentials \
-  -H "Authorization: Bearer aw_pk_xxx.secret" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "DeFi Agent",
-    "capabilities": {
-      "operations": ["transfer", "sign_typed_data"],
-      "allowed_contracts": ["0x...uniswap"]
-    },
-    "limits": {
-      "max_value_per_tx": "1000000000000000000",
-      "max_tx_per_hour": 100
-    }
-  }'
-```
-
-### 3. Agent uses credential to sign
-
-```bash
-curl -X POST http://localhost:8080/agent/rpc \
-  -H "Authorization: Bearer aw_ag_xxx.secret" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "jsonrpc": "2.0",
-    "method": "eth_sendTransaction",
-    "params": [{"to": "0x...", "value": "0x...", "chainId": "0x1"}],
-    "id": 1
-  }'
-```
-
-### 4. Principal revokes access if needed
-
-```bash
-curl -X POST http://localhost:8080/api/credentials/{credential_id}/revoke \
-  -H "Authorization: Bearer aw_pk_xxx.secret"
-```
-
-## Deployment
-
-### Environment Variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `POSTGRES_DSN` | Yes | PostgreSQL connection string |
-| `EXECUTION_BACKEND` | Yes | `kms` or `tee` |
-| `KMS_PROVIDER` | If kms | `local`, `aws`, or `vault` |
-| `KMS_MASTER_KEY` | If local | 32-byte hex master key |
-| `RPC_URL` | No | EVM RPC URL for chain operations |
-| `PORT` | No | Server port (default: 8080) |
-
-### Docker
-
-```bash
-docker-compose up -d
-```
-
-### From Source
-
-```bash
-go build -o bin/server ./cmd/server
-./bin/server
-```
+| Context | Authentication | Use Case |
+|---------|----------------|----------|
+| **Principal API** | `Bearer aw_pk_xxx.secret` | Wallet management, credential creation |
+| **Agent API** | `Bearer aw_ag_xxx.secret` | JSON-RPC signing operations |
 
 ## Support
 
