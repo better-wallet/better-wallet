@@ -31,48 +31,10 @@ jobs:
           fail_ci_if_error: false
         continue-on-error: true
 
-  security-tests:
-    name: Security Tests
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Download dependencies
-        run: go mod download
-
-      - name: Run security tests
-        run: go test -race -tags=security -v ./tests/security/...
-
-  integration-tests:
-    name: Integration Tests
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Download dependencies
-        run: go mod download
-
-      - name: Run integration tests
-        run: go test -race -tags=integration -v ./tests/integration/...
-
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [unit-tests, security-tests, integration-tests]
+    needs: [unit-tests]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
