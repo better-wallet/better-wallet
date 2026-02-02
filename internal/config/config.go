@@ -13,6 +13,9 @@ type Config struct {
 	// Database
 	PostgresDSN string
 
+	// EVM RPC (supports all EVM-compatible chains)
+	RPCURL string
+
 	// Key Execution Backend
 	ExecutionBackend string // kms or tee
 
@@ -46,6 +49,7 @@ type Config struct {
 func Load() (*Config, error) {
 	cfg := &Config{
 		PostgresDSN:            getEnv("POSTGRES_DSN", ""),
+		RPCURL:                 getEnv("RPC_URL", ""),
 		ExecutionBackend:       getEnv("EXECUTION_BACKEND", "kms"),
 		KMSProvider:            getEnv("KMS_PROVIDER", "local"),
 		KMSLocalMasterKey:      getEnv("KMS_LOCAL_MASTER_KEY", getEnv("KMS_KEY_ID", "")), // Backward compat

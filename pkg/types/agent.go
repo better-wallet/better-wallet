@@ -153,8 +153,9 @@ const (
 
 // Operation constants
 const (
-	OperationTransfer      = "transfer"
-	OperationSwap          = "swap"
-	OperationSignMessage   = "sign_message"
-	OperationSignTypedData = "sign_typed_data"
+	OperationTransfer       = "transfer"
+	OperationSwap           = "swap"
+	OperationSignMessage    = "sign_message"
+	OperationSignTypedData  = "sign_typed_data"
+	OperationContractDeploy = "contract_deploy"
 )

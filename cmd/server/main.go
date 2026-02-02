@@ -12,10 +12,10 @@ import (
 	"github.com/better-wallet/better-wallet/internal/api"
 	"github.com/better-wallet/better-wallet/internal/app"
 	"github.com/better-wallet/better-wallet/internal/config"
+	"github.com/better-wallet/better-wallet/internal/eth"
 	"github.com/better-wallet/better-wallet/internal/keyexec"
 	"github.com/better-wallet/better-wallet/internal/logger"
 	"github.com/better-wallet/better-wallet/internal/middleware"
-	"github.com/better-wallet/better-wallet/internal/policy"
 	"github.com/better-wallet/better-wallet/internal/storage"
 )
 
@@ -39,6 +39,20 @@ func main() {
 	defer store.Close()
 
 	slog.Info("connected to database")
+
+	// Initialize EVM client (optional - for RPC operations)
+	var ethClient *eth.Client
+	if cfg.RPCURL != "" {
+		ethClient, err = eth.NewClient(cfg.RPCURL)
+		if err != nil {
+			slog.Error("failed to initialize EVM client", "error", err)
+			os.Exit(1)
+		}
+		defer ethClient.Close()
+		slog.Info("connected to EVM RPC", "chain_id", ethClient.ChainID())
+	} else {
+		slog.Warn("RPC_URL not configured - transaction broadcasting and balance queries will be unavailable")
+	}
 
 	// Initialize key executor based on backend type
 	var keyExec keyexec.KeyExecutor
@@ -75,20 +89,41 @@ func main() {
 
 	slog.Info("initialized key executor", "backend", cfg.ExecutionBackend)
 
-	// Initialize policy engine
-	policyEngine := policy.NewEngine()
+	// Initialize repositories
+	db := store.DB()
+	principalRepo := storage.NewPrincipalRepo(db)
+	apiKeyRepo := storage.NewPrincipalAPIKeyRepo(db)
+	walletRepo := storage.NewAgentWalletRepo(db)
+	walletKeyRepo := storage.NewWalletKeyRepo(db)
+	credentialRepo := storage.NewAgentCredentialRepo(db)
+	rateLimitRepo := storage.NewAgentRateLimitRepo(db)
 
-	// Initialize application services
-	walletService := app.NewWalletService(store, keyExec, policyEngine)
+	// Initialize store adapter for middleware
+	storeAdapter := storage.NewAgentStoreAdapter(
+		principalRepo,
+		apiKeyRepo,
+		walletRepo,
+		credentialRepo,
+	)
+
+	// Initialize agent service
+	agentService := app.NewAgentService(
+		principalRepo,
+		apiKeyRepo,
+		walletRepo,
+		walletKeyRepo,
+		credentialRepo,
+		rateLimitRepo,
+		keyExec,
+		ethClient,
+	)
 
 	// Initialize middleware
-	appAuthMiddleware := middleware.NewAppAuthMiddleware(store)
-	userAuthMiddleware := middleware.NewAuthMiddleware()
-	idempotencyRepo := storage.NewIdempotencyRepo(store)
-	idempotencyMiddleware := middleware.NewIdempotencyMiddleware(idempotencyRepo)
+	principalAuthMiddleware := middleware.NewPrincipalAuthMiddleware(storeAdapter)
+	agentAuthMiddleware := middleware.NewAgentAuthMiddleware(storeAdapter)
 
 	// Initialize API server
-	server := api.NewServer(cfg, walletService, appAuthMiddleware, userAuthMiddleware, idempotencyMiddleware, store)
+	server := api.NewServer(cfg, agentService, principalAuthMiddleware, agentAuthMiddleware)
 
 	// Start server in a goroutine
 	serverErrors := make(chan error, 1)

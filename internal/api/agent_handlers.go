@@ -22,6 +22,39 @@ func NewAgentHandlers(agentService *app.AgentService) *AgentHandlers {
 	return &AgentHandlers{agentService: agentService}
 }
 
+// HandlePrincipals handles principal collection operations (no auth required for creation)
+func (h *AgentHandlers) HandlePrincipals(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodPost:
+		h.createPrincipal(w, r)
+	default:
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+	}
+}
+
+func (h *AgentHandlers) createPrincipal(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name  string `json:"name"`
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	resp, err := h.agentService.CreatePrincipal(r.Context(), app.CreatePrincipalRequest{
+		Name:  req.Name,
+		Email: req.Email,
+	})
+	if err != nil {
+		slog.Error("failed to create principal", "error", err)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "failed to create principal"})
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, resp)
+}
+
 // HandleWallets handles wallet collection operations
 func (h *AgentHandlers) HandleWallets(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {

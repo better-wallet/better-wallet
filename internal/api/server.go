@@ -5,45 +5,39 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
+	"github.com/better-wallet/better-wallet/internal/app"
 	"github.com/better-wallet/better-wallet/internal/config"
 	"github.com/better-wallet/better-wallet/internal/logger"
 	"github.com/better-wallet/better-wallet/internal/middleware"
-	"github.com/better-wallet/better-wallet/internal/storage"
-	"github.com/better-wallet/better-wallet/pkg/crypto"
-	apperrors "github.com/better-wallet/better-wallet/pkg/errors"
 )
 
 // Server represents the HTTP server
 type Server struct {
-	config                *config.Config
-	walletService         WalletService
-	appAuthMiddleware     *middleware.AppAuthMiddleware
-	userAuthMiddleware    *middleware.AuthMiddleware
-	idempotencyMiddleware *middleware.IdempotencyMiddleware
-	httpServer            *http.Server
-	store                 *storage.Store
-	authKeyStore          AuthorizationKeyStore
+	config                  *config.Config
+	agentService            *app.AgentService
+	principalAuthMiddleware *middleware.PrincipalAuthMiddleware
+	agentAuthMiddleware     *middleware.AgentAuthMiddleware
+	agentHandlers           *AgentHandlers
+	agentSigningHandlers    *AgentSigningHandlers
+	httpServer              *http.Server
 }
 
 // NewServer creates a new API server
 func NewServer(
 	cfg *config.Config,
-	walletService WalletService,
-	appAuthMiddleware *middleware.AppAuthMiddleware,
-	userAuthMiddleware *middleware.AuthMiddleware,
-	idempotencyMiddleware *middleware.IdempotencyMiddleware,
-	store *storage.Store,
+	agentService *app.AgentService,
+	principalAuthMiddleware *middleware.PrincipalAuthMiddleware,
+	agentAuthMiddleware *middleware.AgentAuthMiddleware,
 ) *Server {
 	return &Server{
-		config:                cfg,
-		walletService:         walletService,
-		appAuthMiddleware:     appAuthMiddleware,
-		userAuthMiddleware:    userAuthMiddleware,
-		idempotencyMiddleware: idempotencyMiddleware,
-		store:                 store,
+		config:                  cfg,
+		agentService:            agentService,
+		principalAuthMiddleware: principalAuthMiddleware,
+		agentAuthMiddleware:     agentAuthMiddleware,
+		agentHandlers:           NewAgentHandlers(agentService),
+		agentSigningHandlers:    NewAgentSigningHandlers(agentService),
 	}
 }
 
@@ -54,53 +48,32 @@ func (s *Server) Start() error {
 	// Health check endpoint (no auth required)
 	rootMux.HandleFunc("/health", s.handleHealth)
 
-	// API v1 routes (auth must run BEFORE idempotency to prevent replay bypass).
-	v1Mux := http.NewServeMux()
-	v1Mux.Handle("/v1/wallets", http.HandlerFunc(s.handleWallets))
+	// Principal registration endpoint (no auth required - this is how new principals get their API key)
+	rootMux.Handle("/v1/principals", middleware.LimitBody(http.HandlerFunc(s.agentHandlers.HandlePrincipals)))
 
-	// Wallet operations - routing to appropriate handler
-	v1Mux.Handle("/v1/wallets/", http.HandlerFunc(s.handleWalletOperationsRouter))
+	// Management API routes (Principal auth required)
+	// These are used by humans/orgs to manage wallets and credentials
+	mgmtMux := http.NewServeMux()
+	mgmtMux.Handle("/v1/wallets", http.HandlerFunc(s.agentHandlers.HandleWallets))
+	mgmtMux.Handle("/v1/wallets/", http.HandlerFunc(s.agentHandlers.HandleWalletOperations))
+	mgmtMux.Handle("/v1/credentials/", http.HandlerFunc(s.agentHandlers.HandleCredentialOperations))
 
-	// Policy management routes
-	v1Mux.Handle("/v1/policies", http.HandlerFunc(s.handlePolicies))
-
-	v1Mux.Handle("/v1/policies/", http.HandlerFunc(s.handlePolicyOperations))
-
-	// Key quorum management routes
-	v1Mux.Handle("/v1/key-quorums", http.HandlerFunc(s.handleKeyQuorums))
-
-	v1Mux.Handle("/v1/key-quorums/", http.HandlerFunc(s.handleKeyQuorumOperations))
-
-	// User management routes
-	v1Mux.Handle("/v1/users", http.HandlerFunc(s.handleUsers))
-
-	v1Mux.Handle("/v1/users/", http.HandlerFunc(s.handleUserOperations))
-
-	// Transaction query routes
-	v1Mux.Handle("/v1/transactions", http.HandlerFunc(s.handleTransactions))
-
-	v1Mux.Handle("/v1/transactions/", http.HandlerFunc(s.handleTransactionOperations))
-
-	// Authorization key management routes
-	v1Mux.Handle("/v1/authorization-keys", http.HandlerFunc(s.handleAuthorizationKeys))
-
-	v1Mux.Handle("/v1/authorization-keys/", http.HandlerFunc(s.handleAuthorizationKeyOperations))
-
-	// Condition set management routes
-	v1Mux.Handle("/v1/condition_sets", http.HandlerFunc(s.handleConditionSets))
-
-	v1Mux.Handle("/v1/condition_sets/", http.HandlerFunc(s.handleConditionSetOperations))
-
-	v1Handler := middleware.LimitBody(
-		s.appAuthMiddleware.Authenticate(
-			s.userAuthMiddleware.Authenticate(
-				s.requireUserMiddleware(
-					s.idempotencyMiddleware.Handle(v1Mux),
-				),
-			),
-		),
+	mgmtHandler := middleware.LimitBody(
+		s.principalAuthMiddleware.Authenticate(mgmtMux),
 	)
-	rootMux.Handle("/v1/", v1Handler)
+	rootMux.Handle("/v1/wallets", mgmtHandler)
+	rootMux.Handle("/v1/wallets/", mgmtHandler)
+	rootMux.Handle("/v1/credentials/", mgmtHandler)
+
+	// Agent Signing API routes (Agent credential auth required)
+	// These are used by AI agents to request signing operations
+	agentMux := http.NewServeMux()
+	agentMux.Handle("/v1/agent/rpc", http.HandlerFunc(s.agentSigningHandlers.HandleRPC))
+
+	agentHandler := middleware.LimitBody(
+		s.agentAuthMiddleware.Authenticate(agentMux),
+	)
+	rootMux.Handle("/v1/agent/", agentHandler)
 
 	s.httpServer = &http.Server{
 		Addr: fmt.Sprintf(":%d", s.config.Port),
@@ -113,49 +86,6 @@ func (s *Server) Start() error {
 
 	slog.Info("starting server", "port", s.config.Port)
 	return s.httpServer.ListenAndServe()
-}
-
-func (s *Server) requireUserMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !isUserRequiredRequest(r) {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		if _, ok := middleware.GetUserSub(r.Context()); !ok {
-			s.writeError(w, apperrors.ErrUnauthorized)
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
-}
-
-func isUserRequiredRequest(r *http.Request) bool {
-	path := r.URL.Path
-	method := r.Method
-
-	// Allow app-only creation of app-managed wallets.
-	if path == "/v1/wallets" && method == http.MethodPost {
-		return false
-	}
-
-	// Allow app-only creation of app-owned policies.
-	if path == "/v1/policies" && method == http.MethodPost {
-		return false
-	}
-
-	// Allow wallet RPC without user JWT (authorization signature is required by the handler).
-	normalizedPath := strings.TrimSuffix(path, "/")
-	if method == http.MethodPost && strings.HasPrefix(normalizedPath, "/v1/wallets/") {
-		parts := strings.Split(strings.TrimPrefix(normalizedPath, "/v1/wallets/"), "/")
-		if len(parts) == 2 && parts[1] == "rpc" {
-			return false
-		}
-	}
-
-	// Default: require user for all other v1 endpoints.
-	return true
 }
 
 // Shutdown gracefully shuts down the server
@@ -188,9 +118,4 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"ok"}`))
-}
-
-// hpkeEncrypt encrypts data using HPKE with the recipient's public key
-func (s *Server) hpkeEncrypt(recipientPublicKeyB64 string, plaintext []byte) (*crypto.HPKEEncryptedData, error) {
-	return crypto.EncryptWithHPKE(recipientPublicKeyB64, plaintext)
 }
