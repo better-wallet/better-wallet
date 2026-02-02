@@ -1,217 +1,105 @@
-import { bigint, boolean, integer, jsonb, pgTable, primaryKey, serial, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core'
+import { bigint, boolean, integer, jsonb, pgTable, primaryKey, serial, text, timestamp, uuid } from 'drizzle-orm/pg-core'
 
-// ==================== Better Auth Tables ====================
+// ==================== Principal Tables ====================
 
-export const user = pgTable('user', {
-  id: text('id').primaryKey(),
+// Principals - humans or organizations that own agent wallets
+export const principals = pgTable('principals', {
+  id: uuid('id').primaryKey().defaultRandom(),
   name: text('name').notNull(),
   email: text('email').notNull().unique(),
   emailVerified: boolean('email_verified').notNull().default(false),
-  image: text('image'),
-  role: text('role').notNull().default('user'), // 'user' | 'provider'
-  createdAt: timestamp('created_at').notNull().defaultNow(),
-  updatedAt: timestamp('updated_at').notNull().defaultNow(),
-})
-
-export const session = pgTable('session', {
-  id: text('id').primaryKey(),
-  expiresAt: timestamp('expires_at').notNull(),
-  token: text('token').notNull().unique(),
-  createdAt: timestamp('created_at').notNull().defaultNow(),
-  updatedAt: timestamp('updated_at').notNull().defaultNow(),
-  ipAddress: text('ip_address'),
-  userAgent: text('user_agent'),
-  userId: text('user_id')
-    .notNull()
-    .references(() => user.id, { onDelete: 'cascade' }),
-})
-
-export const account = pgTable('account', {
-  id: text('id').primaryKey(),
-  accountId: text('account_id').notNull(),
-  providerId: text('provider_id').notNull(),
-  userId: text('user_id')
-    .notNull()
-    .references(() => user.id, { onDelete: 'cascade' }),
-  accessToken: text('access_token'),
-  refreshToken: text('refresh_token'),
-  idToken: text('id_token'),
-  accessTokenExpiresAt: timestamp('access_token_expires_at'),
-  refreshTokenExpiresAt: timestamp('refresh_token_expires_at'),
-  scope: text('scope'),
-  password: text('password'),
-  createdAt: timestamp('created_at').notNull().defaultNow(),
-  updatedAt: timestamp('updated_at').notNull().defaultNow(),
-})
-
-export const verification = pgTable('verification', {
-  id: text('id').primaryKey(),
-  identifier: text('identifier').notNull(),
-  value: text('value').notNull(),
-  expiresAt: timestamp('expires_at').notNull(),
-  createdAt: timestamp('created_at').notNull().defaultNow(),
-  updatedAt: timestamp('updated_at').notNull().defaultNow(),
-})
-
-// ==================== Dashboard Tables ====================
-
-// Wallet users - bridge between dashboard users and wallet system
-export const walletUsers = pgTable('wallet_users', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  dashboardUserId: text('dashboard_user_id')
-    .notNull()
-    .unique()
-    .references(() => user.id, { onDelete: 'cascade' }),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-})
-
-// Apps - multi-tenant application management
-export const apps = pgTable('apps', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  name: text('name').notNull(),
-  description: text('description'),
-  ownerId: uuid('owner_id')
-    .notNull()
-    .references(() => walletUsers.id, { onDelete: 'restrict' }),
-  status: text('status').notNull().default('active'), // 'active' | 'suspended' | 'deleted'
-  settings: jsonb('settings').notNull().default({}),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
-// App secrets - API key management
-export const appSecrets = pgTable('app_secrets', {
+// Principal API keys for management operations
+export const principalApiKeys = pgTable('principal_api_keys', {
   id: uuid('id').primaryKey().defaultRandom(),
-  appId: uuid('app_id')
+  principalId: uuid('principal_id')
     .notNull()
-    .references(() => apps.id, { onDelete: 'cascade' }),
-  secretHash: text('secret_hash').notNull(),
-  secretPrefix: text('secret_prefix').notNull(), // e.g., "bw_sk_abc..."
-  status: text('status').notNull().default('active'), // 'active' | 'rotated' | 'revoked'
+    .references(() => principals.id, { onDelete: 'cascade' }),
+  keyHash: text('key_hash').notNull(),
+  keyPrefix: text('key_prefix').notNull(),
+  name: text('name').notNull(),
+  status: text('status').notNull().default('active'),
   lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  rotatedAt: timestamp('rotated_at', { withTimezone: true }),
-  expiresAt: timestamp('expires_at', { withTimezone: true }),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
 })
 
-// App members - team management
-export const appMembers = pgTable(
-  'app_members',
-  {
-    id: uuid('id').primaryKey().defaultRandom(),
-    appId: uuid('app_id')
-      .notNull()
-      .references(() => apps.id, { onDelete: 'cascade' }),
-    userId: uuid('user_id')
-      .notNull()
-      .references(() => walletUsers.id, { onDelete: 'cascade' }),
-    role: text('role').notNull().default('developer'), // 'admin' | 'developer' | 'viewer'
-    invitedBy: uuid('invited_by').references(() => walletUsers.id),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  },
-  (table) => [unique().on(table.appId, table.userId)]
-)
+// ==================== Agent Wallet Tables ====================
 
-// Type exports
-export type User = typeof user.$inferSelect
-export type WalletUser = typeof walletUsers.$inferSelect
-export type App = typeof apps.$inferSelect
-export type AppSecret = typeof appSecrets.$inferSelect
-export type AppMember = typeof appMembers.$inferSelect
-
-// App settings type
-export interface AppSettings {
-  auth?: {
-    kind: 'oidc' | 'jwt'
-    issuer: string
-    audience: string
-    jwks_uri: string
-  }
-  rpc?: {
-    endpoints: Record<string, string>
-  }
-  rate_limit?: {
-    qps: number
-  }
-}
-
-// ==================== Wallet Backend Tables ====================
-// These tables are shared with the Go backend
-
-// External users (from JWT sub claim, not dashboard users)
-export const users = pgTable('users', {
+export const agentWallets = pgTable('agent_wallets', {
   id: uuid('id').primaryKey().defaultRandom(),
-  externalSub: text('external_sub').notNull(),
-  appId: uuid('app_id').references(() => apps.id, { onDelete: 'cascade' }),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-})
-
-// Authorization keys for signing requests
-export const authorizationKeys = pgTable('authorization_keys', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  publicKey: text('public_key').notNull(), // hex encoded
-  algorithm: text('algorithm').notNull().default('p256'),
-  ownerEntity: text('owner_entity').notNull(),
-  status: text('status').notNull().default('active'), // active, rotated, revoked
-  appId: uuid('app_id').references(() => apps.id, { onDelete: 'cascade' }),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  rotatedAt: timestamp('rotated_at', { withTimezone: true }),
-})
-
-// Key quorums for M-of-N threshold signatures
-export const keyQuorums = pgTable('key_quorums', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  threshold: integer('threshold').notNull(),
-  keyIds: jsonb('key_ids').notNull().$type<string[]>(),
-  status: text('status').notNull().default('active'), // active, inactive
-  appId: uuid('app_id').references(() => apps.id, { onDelete: 'cascade' }),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-})
-
-// Wallets
-export const wallets = pgTable('wallets', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }), // nullable for app-managed wallets
-  chainType: text('chain_type').notNull().default('ethereum'),
-  ownerId: uuid('owner_id'), // nullable for app-managed wallets, references authorization_keys or key_quorums
-  execBackend: text('exec_backend').notNull().default('kms'), // kms, tee
-  address: text('address').notNull(),
-  appId: uuid('app_id').references(() => apps.id, { onDelete: 'cascade' }),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-})
-
-// Wallet shares (encrypted key material)
-export const walletShares = pgTable(
-  'wallet_shares',
-  {
-    walletId: uuid('wallet_id')
-      .notNull()
-      .references(() => wallets.id, { onDelete: 'cascade' }),
-    shareType: text('share_type').notNull(), // auth_share, exec_share, enclave_share
-    blobEncrypted: text('blob_encrypted').notNull(), // base64 encoded
-    kmsKeyId: text('kms_key_id'),
-    threshold: integer('threshold').default(2),
-    totalShares: integer('total_shares').default(3),
-  },
-  (table) => [primaryKey({ columns: [table.walletId, table.shareType] })]
-)
-
-// Policies
-// Ownership model:
-// - User-owned policies: owner_id references authorization_keys, used for user wallet policies
-// - App-owned policies: owner_id is null, app_id determines ownership, used for app-managed wallet policies
-export const policies = pgTable('policies', {
-  id: uuid('id').primaryKey().defaultRandom(),
+  principalId: uuid('principal_id')
+    .notNull()
+    .references(() => principals.id, { onDelete: 'restrict' }),
   name: text('name').notNull(),
   chainType: text('chain_type').notNull().default('ethereum'),
-  version: text('version').notNull().default('1.0'),
-  rules: jsonb('rules').notNull().$type<PolicyRules>(),
-  ownerId: uuid('owner_id'), // nullable: null for app-owned policies, references authorization_keys for user-owned
-  appId: uuid('app_id').references(() => apps.id, { onDelete: 'cascade' }),
+  address: text('address').notNull(),
+  execBackend: text('exec_backend').notNull().default('kms'),
+  status: text('status').notNull().default('active'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+export const walletKeys = pgTable('wallet_keys', {
+  walletId: uuid('wallet_id')
+    .primaryKey()
+    .references(() => agentWallets.id, { onDelete: 'cascade' }),
+  encryptedKey: text('encrypted_key').notNull(),
+  kmsKeyId: text('kms_key_id').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
-// Policy rules type
+// ==================== Agent Credential Tables ====================
+
+export const agentCredentials = pgTable('agent_credentials', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  walletId: uuid('wallet_id')
+    .notNull()
+    .references(() => agentWallets.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  keyHash: text('key_hash').notNull(),
+  keyPrefix: text('key_prefix').notNull(),
+  capabilities: jsonb('capabilities').notNull().$type<AgentCapabilities>(),
+  limits: jsonb('limits').notNull().$type<AgentLimits>(),
+  status: text('status').notNull().default('active'),
+  lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  pausedAt: timestamp('paused_at', { withTimezone: true }),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
+})
+
+export interface AgentCapabilities {
+  chains: string[]
+  operations: string[]
+  allowedContracts: string[]
+  allowedMethods: string[]
+}
+
+export interface AgentLimits {
+  maxValuePerTx: string
+  maxValuePerHour: string
+  maxValuePerDay: string
+  maxTxPerHour: number
+  maxTxPerDay: number
+}
+
+// ==================== Policy Tables ====================
+
+export const agentPolicies = pgTable('agent_policies', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  walletId: uuid('wallet_id')
+    .notNull()
+    .references(() => agentWallets.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  chainType: text('chain_type').notNull().default('ethereum'),
+  rules: jsonb('rules').notNull().$type<PolicyRules>(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
 export interface PolicyRule {
   name: string
   method: string
@@ -230,110 +118,70 @@ export interface PolicyRules {
   rules: PolicyRule[]
 }
 
-// Wallet-Policy junction table
-export const walletPolicies = pgTable(
-  'wallet_policies',
-  {
-    walletId: uuid('wallet_id')
-      .notNull()
-      .references(() => wallets.id, { onDelete: 'cascade' }),
-    policyId: uuid('policy_id')
-      .notNull()
-      .references(() => policies.id, { onDelete: 'cascade' }),
-  },
-  (table) => [primaryKey({ columns: [table.walletId, table.policyId] })]
-)
+// ==================== Rate Limiting Tables ====================
 
-// Session signers (temporary delegated signing)
-export const sessionSigners = pgTable('session_signers', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  walletId: uuid('wallet_id')
+export const agentRateLimits = pgTable('agent_rate_limits', {
+  credentialId: uuid('credential_id')
     .notNull()
-    .references(() => wallets.id, { onDelete: 'cascade' }),
-  signerId: text('signer_id').notNull(), // references authorization_keys.id as string
-  policyOverrideId: uuid('policy_override_id').references(() => policies.id),
-  allowedMethods: jsonb('allowed_methods').$type<string[]>(),
-  maxValue: text('max_value'), // numeric string (wei)
-  maxTxs: integer('max_txs'),
-  ttlExpiresAt: timestamp('ttl_expires_at', { withTimezone: true }).notNull(),
-  appId: uuid('app_id').references(() => apps.id, { onDelete: 'cascade' }),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  revokedAt: timestamp('revoked_at', { withTimezone: true }),
-})
+    .references(() => agentCredentials.id, { onDelete: 'cascade' }),
+  windowType: text('window_type').notNull(),
+  windowStart: timestamp('window_start', { withTimezone: true }).notNull(),
+  txCount: integer('tx_count').notNull().default(0),
+  totalValue: text('total_value').notNull().default('0'),
+}, (table) => [
+  primaryKey({ columns: [table.credentialId, table.windowType, table.windowStart] })
+])
 
-// Condition sets (reusable value sets for policies)
-export const conditionSets = pgTable('condition_sets', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  name: text('name').notNull(),
-  description: text('description'),
-  values: jsonb('values').notNull().$type<unknown[]>(),
-  ownerId: uuid('owner_id').notNull(),
-  appId: uuid('app_id').references(() => apps.id, { onDelete: 'cascade' }),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-})
+// ==================== Audit Tables ====================
 
-// Audit logs
-export const auditLogs = pgTable('audit_logs', {
+export const agentAuditLogs = pgTable('agent_audit_logs', {
   id: serial('id').primaryKey(),
-  actor: text('actor').notNull(),
+  credentialId: uuid('credential_id').references(() => agentCredentials.id, { onDelete: 'set null' }),
+  walletId: uuid('wallet_id').references(() => agentWallets.id, { onDelete: 'set null' }),
+  principalId: uuid('principal_id').references(() => principals.id, { onDelete: 'set null' }),
   action: text('action').notNull(),
   resourceType: text('resource_type').notNull(),
   resourceId: text('resource_id').notNull(),
   policyResult: text('policy_result'),
-  signerId: text('signer_id'),
   txHash: text('tx_hash'),
-  requestDigest: text('request_digest'),
+  errorMessage: text('error_message'),
+  metadata: jsonb('metadata').$type<Record<string, unknown>>(),
   clientIp: text('client_ip'),
   userAgent: text('user_agent'),
-  appId: uuid('app_id').references(() => apps.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
-// Transactions
-export const transactions = pgTable('transactions', {
+// ==================== Transaction Tables ====================
+
+export const agentTransactions = pgTable('agent_transactions', {
   id: uuid('id').primaryKey().defaultRandom(),
+  credentialId: uuid('credential_id')
+    .notNull()
+    .references(() => agentCredentials.id, { onDelete: 'cascade' }),
   walletId: uuid('wallet_id')
     .notNull()
-    .references(() => wallets.id, { onDelete: 'cascade' }),
+    .references(() => agentWallets.id, { onDelete: 'cascade' }),
   chainId: bigint('chain_id', { mode: 'number' }).notNull(),
   txHash: text('tx_hash'),
-  status: text('status').notNull().default('pending'), // pending, submitted, confirmed, failed
-  method: text('method').notNull(), // eth_sendTransaction, eth_signTransaction
+  status: text('status').notNull().default('pending'),
+  method: text('method').notNull(),
   toAddress: text('to_address'),
-  value: text('value'), // wei as string
+  value: text('value'),
   data: text('data'),
-  nonce: bigint('nonce', { mode: 'number' }),
-  gasLimit: bigint('gas_limit', { mode: 'number' }),
-  maxFeePerGas: text('max_fee_per_gas'),
-  maxPriorityFeePerGas: text('max_priority_fee_per_gas'),
-  signedTx: text('signed_tx'), // hex encoded
+  signedTx: text('signed_tx'),
   errorMessage: text('error_message'),
-  appId: uuid('app_id').references(() => apps.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
-// Idempotency keys
-export const idempotencyKeys = pgTable('idempotency_keys', {
-  key: text('key').primaryKey(),
-  resourceType: text('resource_type').notNull(),
-  resourceId: uuid('resource_id'),
-  status: text('status').notNull().default('pending'), // pending, completed, failed
-  responseCode: integer('response_code'),
-  responseBody: jsonb('response_body'),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  completedAt: timestamp('completed_at', { withTimezone: true }),
-  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
-})
+// ==================== Type Exports ====================
 
-// Additional type exports
-export type ExternalUser = typeof users.$inferSelect
-export type Wallet = typeof wallets.$inferSelect
-export type AuthorizationKey = typeof authorizationKeys.$inferSelect
-export type KeyQuorum = typeof keyQuorums.$inferSelect
-export type Policy = typeof policies.$inferSelect
-export type SessionSigner = typeof sessionSigners.$inferSelect
-export type ConditionSet = typeof conditionSets.$inferSelect
-export type AuditLog = typeof auditLogs.$inferSelect
-export type Transaction = typeof transactions.$inferSelect
+export type Principal = typeof principals.$inferSelect
+export type PrincipalApiKey = typeof principalApiKeys.$inferSelect
+export type AgentWallet = typeof agentWallets.$inferSelect
+export type WalletKey = typeof walletKeys.$inferSelect
+export type AgentCredential = typeof agentCredentials.$inferSelect
+export type AgentPolicy = typeof agentPolicies.$inferSelect
+export type AgentRateLimit = typeof agentRateLimits.$inferSelect
+export type AgentAuditLog = typeof agentAuditLogs.$inferSelect
+export type AgentTransaction = typeof agentTransactions.$inferSelect
