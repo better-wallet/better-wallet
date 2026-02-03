@@ -65,18 +65,18 @@ func (v *Validator) Required(field, value string) bool {
 }
 
 // MinLength validates minimum string length
-func (v *Validator) MinLength(field, value string, min int) bool {
-	if len(value) < min {
-		v.AddError(field, fmt.Sprintf("must be at least %d characters", min))
+func (v *Validator) MinLength(field, value string, minLen int) bool {
+	if len(value) < minLen {
+		v.AddError(field, fmt.Sprintf("must be at least %d characters", minLen))
 		return false
 	}
 	return true
 }
 
 // MaxLength validates maximum string length
-func (v *Validator) MaxLength(field, value string, max int) bool {
-	if len(value) > max {
-		v.AddError(field, fmt.Sprintf("must be at most %d characters", max))
+func (v *Validator) MaxLength(field, value string, maxLen int) bool {
+	if len(value) > maxLen {
+		v.AddError(field, fmt.Sprintf("must be at most %d characters", maxLen))
 		return false
 	}
 	return true
@@ -160,7 +160,7 @@ func (v *Validator) NonNegativeInt(field string, value int) bool {
 func WriteValidationError(w http.ResponseWriter, errors ValidationErrors) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadRequest)
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"error":  "validation failed",
 		"code":   "VALIDATION_ERROR",
 		"errors": errors,

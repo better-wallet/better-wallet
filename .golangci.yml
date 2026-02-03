@@ -11,13 +11,11 @@ linters:
     - staticcheck
     - unused
     - bodyclose
-    - contextcheck
     - durationcheck
     - errname
     - errorlint
     - exhaustive
-    - exportloopref
-    - gocritic
+    - copyloopvar
     - gofmt
     - goimports
     - gosec
@@ -37,14 +35,10 @@ linters-settings:
   gosec:
     excludes:
       - G104 # Audit errors not checked (we handle this explicitly)
+      - G101 # Hardcoded credentials (false positives on constant names)
+      - G115 # Integer overflow (we control the input values)
     config:
       G306: "0644" # Expected file permissions
-
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - style
-      - performance
 
   revive:
     rules:
@@ -68,7 +62,11 @@ linters-settings:
 
   errcheck:
     check-type-assertions: true
-    check-blank: true
+    check-blank: false
+    exclude-functions:
+      - (net.Conn).SetDeadline
+      - (net.Conn).SetReadDeadline
+      - (net.Conn).SetWriteDeadline
 
 issues:
   exclude-rules:

@@ -71,29 +71,29 @@ func (r *AuditLogRepo) Log(ctx context.Context, entry *AuditLogEntry) error {
 
 // Audit action constants
 const (
-	AuditActionWalletCreated       = "wallet_created"
-	AuditActionWalletPaused        = "wallet_paused"
-	AuditActionWalletResumed       = "wallet_resumed"
-	AuditActionWalletKilled        = "wallet_killed"
-	AuditActionCredentialCreated   = "credential_created"
-	AuditActionCredentialPaused    = "credential_paused"
-	AuditActionCredentialResumed   = "credential_resumed"
-	AuditActionCredentialRevoked   = "credential_revoked"
-	AuditActionSigningRequested    = "signing_requested"
-	AuditActionSigningCompleted    = "signing_completed"
-	AuditActionSigningFailed       = "signing_failed"
-	AuditActionTransactionSent     = "transaction_sent"
-	AuditActionTransactionFailed   = "transaction_failed"
-	AuditActionPolicyCheckPassed   = "policy_check_passed"
-	AuditActionPolicyCheckFailed   = "policy_check_failed"
-	AuditActionRateLimitExceeded   = "rate_limit_exceeded"
+	AuditActionWalletCreated        = "wallet_created"
+	AuditActionWalletPaused         = "wallet_paused"
+	AuditActionWalletResumed        = "wallet_resumed"
+	AuditActionWalletKilled         = "wallet_killed"
+	AuditActionCredentialCreated    = "credential_created"
+	AuditActionCredentialPaused     = "credential_paused"
+	AuditActionCredentialResumed    = "credential_resumed"
+	AuditActionCredentialRevoked    = "credential_revoked"
+	AuditActionSigningRequested     = "signing_requested"
+	AuditActionSigningCompleted     = "signing_completed"
+	AuditActionSigningFailed        = "signing_failed"
+	AuditActionTransactionSent      = "transaction_sent"
+	AuditActionTransactionFailed    = "transaction_failed"
+	AuditActionPolicyCheckPassed    = "policy_check_passed"
+	AuditActionPolicyCheckFailed    = "policy_check_failed"
+	AuditActionRateLimitExceeded    = "rate_limit_exceeded"
 	AuditActionAuthenticationFailed = "authentication_failed"
 )
 
 // Resource type constants
 const (
-	ResourceTypeWallet     = "wallet"
-	ResourceTypeCredential = "credential"
+	ResourceTypeWallet      = "wallet"
+	ResourceTypeCredential  = "credential"
 	ResourceTypeTransaction = "transaction"
-	ResourceTypePrincipal  = "principal"
+	ResourceTypePrincipal   = "principal"
 )

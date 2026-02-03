@@ -9,10 +9,10 @@ import (
 
 // AgentStoreAdapter combines repositories to implement middleware store interfaces
 type AgentStoreAdapter struct {
-	principalRepo   *PrincipalRepo
-	apiKeyRepo      *PrincipalAPIKeyRepo
-	walletRepo      *AgentWalletRepo
-	credentialRepo  *AgentCredentialRepo
+	principalRepo  *PrincipalRepo
+	apiKeyRepo     *PrincipalAPIKeyRepo
+	walletRepo     *AgentWalletRepo
+	credentialRepo *AgentCredentialRepo
 }
 
 // NewAgentStoreAdapter creates a new store adapter

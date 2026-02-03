@@ -124,5 +124,5 @@ func GetPrincipal(ctx context.Context) *types.Principal {
 func writeJSONError(w http.ResponseWriter, message string, status int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	w.Write([]byte(`{"error":"` + message + `"}`))
+	_, _ = w.Write([]byte(`{"error":"` + message + `"}`))
 }

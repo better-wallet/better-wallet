@@ -153,11 +153,11 @@ func TestConfig_Validate(t *testing.T) {
 		{
 			name: "KMS Vault missing transit key",
 			config: &Config{
-				PostgresDSN:     "postgres://localhost:5432/test",
+				PostgresDSN:      "postgres://localhost:5432/test",
 				ExecutionBackend: "kms",
-				KMSProvider:     "vault",
-				KMSVaultAddress: "http://localhost:8200",
-				KMSVaultToken:   "token",
+				KMSProvider:      "vault",
+				KMSVaultAddress:  "http://localhost:8200",
+				KMSVaultToken:    "token",
 			},
 			wantErr: true,
 			errMsg:  "KMS_VAULT_TRANSIT_KEY is required",
@@ -222,12 +222,12 @@ func TestConfig_Validate(t *testing.T) {
 func TestLoad(t *testing.T) {
 	// Save original env vars and restore after test
 	originalEnv := map[string]string{
-		"POSTGRES_DSN":        os.Getenv("POSTGRES_DSN"),
-		"EXECUTION_BACKEND":   os.Getenv("EXECUTION_BACKEND"),
-		"KMS_PROVIDER":        os.Getenv("KMS_PROVIDER"),
+		"POSTGRES_DSN":         os.Getenv("POSTGRES_DSN"),
+		"EXECUTION_BACKEND":    os.Getenv("EXECUTION_BACKEND"),
+		"KMS_PROVIDER":         os.Getenv("KMS_PROVIDER"),
 		"KMS_LOCAL_MASTER_KEY": os.Getenv("KMS_LOCAL_MASTER_KEY"),
-		"KMS_KEY_ID":          os.Getenv("KMS_KEY_ID"),
-		"PORT":                os.Getenv("PORT"),
+		"KMS_KEY_ID":           os.Getenv("KMS_KEY_ID"),
+		"PORT":                 os.Getenv("PORT"),
 	}
 	defer func() {
 		for k, v := range originalEnv {
@@ -264,9 +264,9 @@ func TestLoad(t *testing.T) {
 
 		cfg, err := Load()
 		require.NoError(t, err)
-		assert.Equal(t, "kms", cfg.ExecutionBackend)      // default
-		assert.Equal(t, "local", cfg.KMSProvider)         // default
-		assert.Equal(t, 8080, cfg.Port)                   // default
+		assert.Equal(t, "kms", cfg.ExecutionBackend) // default
+		assert.Equal(t, "local", cfg.KMSProvider)    // default
+		assert.Equal(t, 8080, cfg.Port)              // default
 	})
 
 	t.Run("backward compatibility with KMS_KEY_ID", func(t *testing.T) {

@@ -83,13 +83,13 @@ type AgentLimits struct {
 
 // AgentPolicy represents constraint rules for agent operations
 type AgentPolicy struct {
-	ID        uuid.UUID              `json:"id"`
-	WalletID  uuid.UUID              `json:"wallet_id"`
-	Name      string                 `json:"name"`
-	ChainType string                 `json:"chain_type"`
+	ID        uuid.UUID      `json:"id"`
+	WalletID  uuid.UUID      `json:"wallet_id"`
+	Name      string         `json:"name"`
+	ChainType string         `json:"chain_type"`
 	Rules     map[string]any `json:"rules"`
-	CreatedAt time.Time              `json:"created_at"`
-	UpdatedAt time.Time              `json:"updated_at"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
 }
 
 // AgentRateLimit tracks rate limits for an agent credential
@@ -103,38 +103,38 @@ type AgentRateLimit struct {
 
 // AgentAuditLog represents an audit trail entry for agent operations
 type AgentAuditLog struct {
-	ID           int64                  `json:"id"`
-	CredentialID *uuid.UUID             `json:"credential_id,omitempty"`
-	WalletID     *uuid.UUID             `json:"wallet_id,omitempty"`
-	PrincipalID  *uuid.UUID             `json:"principal_id,omitempty"`
-	Action       string                 `json:"action"`
-	ResourceType string                 `json:"resource_type"`
-	ResourceID   string                 `json:"resource_id"`
-	PolicyResult *string                `json:"policy_result,omitempty"`
-	TxHash       *string                `json:"tx_hash,omitempty"`
-	ErrorMessage *string                `json:"error_message,omitempty"`
+	ID           int64          `json:"id"`
+	CredentialID *uuid.UUID     `json:"credential_id,omitempty"`
+	WalletID     *uuid.UUID     `json:"wallet_id,omitempty"`
+	PrincipalID  *uuid.UUID     `json:"principal_id,omitempty"`
+	Action       string         `json:"action"`
+	ResourceType string         `json:"resource_type"`
+	ResourceID   string         `json:"resource_id"`
+	PolicyResult *string        `json:"policy_result,omitempty"`
+	TxHash       *string        `json:"tx_hash,omitempty"`
+	ErrorMessage *string        `json:"error_message,omitempty"`
 	Metadata     map[string]any `json:"metadata,omitempty"`
-	ClientIP     *string                `json:"client_ip,omitempty"`
-	UserAgent    *string                `json:"user_agent,omitempty"`
-	CreatedAt    time.Time              `json:"created_at"`
+	ClientIP     *string        `json:"client_ip,omitempty"`
+	UserAgent    *string        `json:"user_agent,omitempty"`
+	CreatedAt    time.Time      `json:"created_at"`
 }
 
 // AgentTransaction represents a transaction submitted by an agent
 type AgentTransaction struct {
-	ID           uuid.UUID  `json:"id"`
-	CredentialID uuid.UUID  `json:"credential_id"`
-	WalletID     uuid.UUID  `json:"wallet_id"`
-	ChainID      int64      `json:"chain_id"`
-	TxHash       *string    `json:"tx_hash,omitempty"`
-	Status       string     `json:"status"`
-	Method       string     `json:"method"`
-	ToAddress    *string    `json:"to_address,omitempty"`
-	Value        *string    `json:"value,omitempty"`
-	Data         *string    `json:"data,omitempty"`
-	SignedTx     *string    `json:"signed_tx,omitempty"`
-	ErrorMessage *string    `json:"error_message,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
+	ID           uuid.UUID `json:"id"`
+	CredentialID uuid.UUID `json:"credential_id"`
+	WalletID     uuid.UUID `json:"wallet_id"`
+	ChainID      int64     `json:"chain_id"`
+	TxHash       *string   `json:"tx_hash,omitempty"`
+	Status       string    `json:"status"`
+	Method       string    `json:"method"`
+	ToAddress    *string   `json:"to_address,omitempty"`
+	Value        *string   `json:"value,omitempty"`
+	Data         *string   `json:"data,omitempty"`
+	SignedTx     *string   `json:"signed_tx,omitempty"`
+	ErrorMessage *string   `json:"error_message,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // Status constants for Agent Wallet system

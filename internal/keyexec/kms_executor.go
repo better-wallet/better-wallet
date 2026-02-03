@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"math/big"
 
-	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/core/types"
+	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 
 	"github.com/better-wallet/better-wallet/internal/crypto"
 )
@@ -169,7 +169,6 @@ func (k *KMSExecutor) reconstructKey(keyMaterial *KeyMaterial) (*ecdsa.PrivateKe
 
 	return privateKey, nil
 }
-
 
 // zeroKey securely zeros out the private key from memory
 func (k *KMSExecutor) zeroKey(privateKey *ecdsa.PrivateKey) {

@@ -14,7 +14,6 @@ import (
 // vsockConn wraps a file descriptor to implement net.Conn
 type vsockConn struct {
 	fd      int
-	local   *unix.SockaddrVM
 	remote  *unix.SockaddrVM
 	timeout time.Duration
 }
@@ -97,7 +96,7 @@ func dialVsock(ctx context.Context, cid, port uint32, timeout time.Duration) (ne
 				}
 				if sockerr != 0 {
 					unix.Close(fd)
-					return nil, fmt.Errorf("vsock connect error: %s", unix.Errno(sockerr))
+					return nil, fmt.Errorf("vsock connect error: %w", unix.Errno(sockerr))
 				}
 				break
 			}

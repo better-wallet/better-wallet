@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/better-wallet/better-wallet/pkg/types"
-	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -177,20 +176,6 @@ func TestStripHexPrefix(t *testing.T) {
 	}
 }
 
-// MockRateLimitRepo for testing CheckRateLimits
-type mockRateLimitRepo struct {
-	hourly *types.AgentRateLimit
-	daily  *types.AgentRateLimit
-	err    error
-}
-
-func (m *mockRateLimitRepo) GetCurrentUsage(credentialID uuid.UUID) (*types.AgentRateLimit, *types.AgentRateLimit, error) {
-	if m.err != nil {
-		return nil, nil, m.err
-	}
-	return m.hourly, m.daily, nil
-}
-
 func TestCheckRateLimits(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -206,8 +191,8 @@ func TestCheckRateLimits(t *testing.T) {
 				Limits: types.AgentLimits{
 					MaxTxPerHour:    10,
 					MaxTxPerDay:     100,
-					MaxValuePerTx:   "1000000000000000000", // 1 ETH
-					MaxValuePerHour: "5000000000000000000", // 5 ETH
+					MaxValuePerTx:   "1000000000000000000",  // 1 ETH
+					MaxValuePerHour: "5000000000000000000",  // 5 ETH
 					MaxValuePerDay:  "10000000000000000000", // 10 ETH
 				},
 			},
@@ -259,7 +244,7 @@ func TestCheckRateLimits(t *testing.T) {
 					MaxValuePerHour: "5000000000000000000", // 5 ETH
 				},
 			},
-			value:   big.NewInt(1000000000000000000), // 1 ETH
+			value:   big.NewInt(1000000000000000000),                          // 1 ETH
 			hourly:  &types.AgentRateLimit{TotalValue: "5000000000000000000"}, // already at 5 ETH
 			daily:   &types.AgentRateLimit{},
 			wantErr: "hourly value limit exceeded",

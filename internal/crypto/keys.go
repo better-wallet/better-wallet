@@ -36,4 +36,3 @@ func PrivateKeyToBytes(privateKey *ecdsa.PrivateKey) []byte {
 func BytesToPrivateKey(b []byte) (*ecdsa.PrivateKey, error) {
 	return crypto.ToECDSA(b)
 }
-

@@ -94,7 +94,7 @@ func (h *AgentSigningHandlers) HandleRPC(w http.ResponseWriter, r *http.Request)
 	case "eth_accounts":
 		h.handleAccounts(w, wallet, rpcReq.ID)
 	case "eth_chainId":
-		h.handleChainId(w, rpcReq.ID)
+		h.handleChainID(w, rpcReq.ID)
 	case "eth_getBalance":
 		h.handleGetBalance(w, r, wallet, rpcReq.ID)
 	default:
@@ -404,7 +404,7 @@ func (h *AgentSigningHandlers) handleAccounts(w http.ResponseWriter, wallet *typ
 	h.writeRPCResult(w, []string{wallet.Address}, id)
 }
 
-func (h *AgentSigningHandlers) handleChainId(w http.ResponseWriter, id any) {
+func (h *AgentSigningHandlers) handleChainID(w http.ResponseWriter, id any) {
 	chainID := h.agentService.GetChainID()
 	if chainID == 0 {
 		h.writeRPCError(w, -32000, "Chain ID not available: RPC not configured", nil, id)
@@ -451,17 +451,17 @@ func (h *AgentSigningHandlers) isContractAllowed(credential *types.AgentCredenti
 	return false
 }
 
-func (h *AgentSigningHandlers) writeRPCResult(w http.ResponseWriter, result any, id any) {
+func (h *AgentSigningHandlers) writeRPCResult(w http.ResponseWriter, result, id any) {
 	resp := JSONRPCResponse{
 		JSONRPC: "2.0",
 		Result:  result,
 		ID:      id,
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
-func (h *AgentSigningHandlers) writeRPCError(w http.ResponseWriter, code int, message string, data any, id any) {
+func (h *AgentSigningHandlers) writeRPCError(w http.ResponseWriter, code int, message string, data, id any) {
 	resp := JSONRPCResponse{
 		JSONRPC: "2.0",
 		Error: &JSONRPCError{
@@ -472,7 +472,7 @@ func (h *AgentSigningHandlers) writeRPCError(w http.ResponseWriter, code int, me
 		ID: id,
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // getString safely extracts a string from a map

@@ -63,8 +63,10 @@ func main() {
 	migrationsDir := "migrations"
 	if _, err := os.Stat(migrationsDir); os.IsNotExist(err) {
 		// Try relative to executable
-		execPath, _ := os.Executable()
-		migrationsDir = filepath.Join(filepath.Dir(execPath), "migrations")
+		execPath, execErr := os.Executable()
+		if execErr == nil {
+			migrationsDir = filepath.Join(filepath.Dir(execPath), "migrations")
+		}
 	}
 
 	suffix := ".up.sql"
@@ -120,7 +122,7 @@ func main() {
 
 		_, err = tx.Exec(ctx, string(content))
 		if err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
 			log.Fatalf("Failed to execute migration %s: %v", file, err)
 		}
 
@@ -130,7 +132,7 @@ func main() {
 			_, err = tx.Exec(ctx, "DELETE FROM schema_migrations WHERE version = $1", version)
 		}
 		if err != nil {
-			tx.Rollback(ctx)
+			_ = tx.Rollback(ctx)
 			log.Fatalf("Failed to update migrations table: %v", err)
 		}
 

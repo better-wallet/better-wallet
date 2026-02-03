@@ -16,11 +16,13 @@
 // - JSON-encoded request/response protocol
 //
 // Build:
-//   GOOS=linux GOARCH=amd64 go build -o enclave ./cmd/enclave
+//
+//	GOOS=linux GOARCH=amd64 go build -o enclave ./cmd/enclave
 //
 // Deploy:
-//   nitro-cli build-enclave --docker-uri enclave-image --output-file enclave.eif
-//   nitro-cli run-enclave --eif-path enclave.eif --memory 512 --cpu-count 2
+//
+//	nitro-cli build-enclave --docker-uri enclave-image --output-file enclave.eif
+//	nitro-cli run-enclave --eif-path enclave.eif --memory 512 --cpu-count 2
 package main
 
 import (
@@ -35,14 +37,14 @@ import (
 	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
-	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/core/types"
+	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 
 	"github.com/better-wallet/better-wallet/internal/crypto"
 )
 
 const (
-	vsockPort = 5000
+	vsockPort  = 5000
 	maxMsgSize = 10 * 1024 * 1024 // 10MB
 )
 
@@ -173,7 +175,7 @@ func handleConnection(conn net.Conn) {
 	sendResponse(conn, resp)
 }
 
-func handleGenerateKey(req *EnclaveRequest) *EnclaveResponse {
+func handleGenerateKey(_ *EnclaveRequest) *EnclaveResponse {
 	// Generate new Ethereum private key
 	privateKey, err := ethcrypto.GenerateKey()
 	if err != nil {
@@ -345,8 +347,8 @@ func sendResponse(conn net.Conn, resp *EnclaveResponse) {
 	lenBuf[2] = byte(len(respData) >> 8)
 	lenBuf[3] = byte(len(respData))
 
-	conn.Write(lenBuf)
-	conn.Write(respData)
+	_, _ = conn.Write(lenBuf)
+	_, _ = conn.Write(respData)
 }
 
 func sendError(conn net.Conn, errMsg string) {

@@ -295,10 +295,10 @@ func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 
 // HealthResponse represents the health check response
 type HealthResponse struct {
-	Status   string            `json:"status"`
-	Version  string            `json:"version,omitempty"`
-	Checks   map[string]string `json:"checks,omitempty"`
-	Uptime   string            `json:"uptime,omitempty"`
+	Status  string            `json:"status"`
+	Version string            `json:"version,omitempty"`
+	Checks  map[string]string `json:"checks,omitempty"`
+	Uptime  string            `json:"uptime,omitempty"`
 }
 
 var serverStartTime = time.Now()
@@ -307,7 +307,7 @@ var serverStartTime = time.Now()
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(HealthResponse{
+	_ = json.NewEncoder(w).Encode(HealthResponse{
 		Status:  "ok",
 		Version: s.config.Version,
 		Uptime:  time.Since(serverStartTime).String(),
@@ -342,13 +342,13 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if allHealthy {
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(HealthResponse{
+		_ = json.NewEncoder(w).Encode(HealthResponse{
 			Status: "ready",
 			Checks: checks,
 		})
 	} else {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(w).Encode(HealthResponse{
+		_ = json.NewEncoder(w).Encode(HealthResponse{
 			Status: "not_ready",
 			Checks: checks,
 		})
@@ -359,7 +359,7 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(HealthResponse{
+	_ = json.NewEncoder(w).Encode(HealthResponse{
 		Status: "alive",
 	})
 }

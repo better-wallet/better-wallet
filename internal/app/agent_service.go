@@ -642,11 +642,7 @@ type SendTransactionResponse struct {
 // SendTransaction signs and broadcasts an Ethereum transaction
 func (s *AgentService) SendTransaction(ctx context.Context, req SendTransactionRequest) (*SendTransactionResponse, error) {
 	// First sign the transaction
-	signedTxHex, err := s.SignTransaction(ctx, SignTransactionRequest{
-		WalletID: req.WalletID,
-		ChainID:  req.ChainID,
-		Params:   req.Params,
-	})
+	signedTxHex, err := s.SignTransaction(ctx, SignTransactionRequest(req))
 	if err != nil {
 		return nil, err
 	}

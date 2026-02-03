@@ -81,10 +81,10 @@ func (m *AgentAuthMiddleware) Authenticate(next http.Handler) http.Handler {
 		case types.AgentStatusActive:
 			// OK
 		case types.AgentStatusPaused:
-			writeJSONErrorWithCode(w, "agent credential is paused", "CREDENTIAL_PAUSED", http.StatusForbidden)
+			writeJSONErrorWithCode(w, "agent credential is paused", "CREDENTIAL_PAUSED")
 			return
 		case types.AgentStatusRevoked:
-			writeJSONErrorWithCode(w, "agent credential is revoked", "CREDENTIAL_REVOKED", http.StatusForbidden)
+			writeJSONErrorWithCode(w, "agent credential is revoked", "CREDENTIAL_REVOKED")
 			return
 		default:
 			writeJSONError(w, "agent credential is not active", http.StatusForbidden)
@@ -109,10 +109,10 @@ func (m *AgentAuthMiddleware) Authenticate(next http.Handler) http.Handler {
 		case types.AgentStatusActive:
 			// OK
 		case types.AgentStatusPaused:
-			writeJSONErrorWithCode(w, "wallet is paused", "WALLET_PAUSED", http.StatusForbidden)
+			writeJSONErrorWithCode(w, "wallet is paused", "WALLET_PAUSED")
 			return
 		case types.AgentStatusKilled:
-			writeJSONErrorWithCode(w, "wallet is killed", "WALLET_KILLED", http.StatusForbidden)
+			writeJSONErrorWithCode(w, "wallet is killed", "WALLET_KILLED")
 			return
 		default:
 			writeJSONError(w, "wallet is not active", http.StatusForbidden)
@@ -154,8 +154,8 @@ func GetAgentWallet(ctx context.Context) *types.AgentWallet {
 }
 
 // writeJSONErrorWithCode writes a JSON error response with an error code
-func writeJSONErrorWithCode(w http.ResponseWriter, message, code string, status int) {
+func writeJSONErrorWithCode(w http.ResponseWriter, message, code string) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	w.Write([]byte(`{"error":"` + message + `","code":"` + code + `"}`))
+	w.WriteHeader(http.StatusForbidden)
+	_, _ = w.Write([]byte(`{"error":"` + message + `","code":"` + code + `"}`))
 }

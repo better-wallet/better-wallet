@@ -12,11 +12,11 @@ import (
 
 func TestAuditContext(t *testing.T) {
 	tests := []struct {
-		name           string
-		headers        map[string]string
-		remoteAddr     string
-		expectedIP     *string
-		expectedUA     *string
+		name       string
+		headers    map[string]string
+		remoteAddr string
+		expectedIP *string
+		expectedUA *string
 	}{
 		{
 			name: "extracts X-Forwarded-For header",
