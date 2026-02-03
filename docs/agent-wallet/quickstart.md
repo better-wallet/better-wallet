@@ -84,7 +84,7 @@ Save this securely - the secret part is only shown once.
 ### 3. Create an Agent Wallet
 
 ```bash
-curl -X POST http://localhost:8080/api/wallets \
+curl -X POST http://localhost:8080/v1/wallets \
   -H "Authorization: Bearer aw_pk_xxxxxxxxxxxx.yyyyyyyyyyyyyyyyyyyyyyyy" \
   -H "Content-Type: application/json" \
   -d '{
@@ -108,7 +108,7 @@ Response:
 ### 4. Create an Agent Credential
 
 ```bash
-curl -X POST http://localhost:8080/api/wallets/550e8400-e29b-41d4-a716-446655440000/credentials \
+curl -X POST http://localhost:8080/v1/wallets/550e8400-e29b-41d4-a716-446655440000/credentials \
   -H "Authorization: Bearer aw_pk_xxxxxxxxxxxx.yyyyyyyyyyyyyyyyyyyyyyyy" \
   -H "Content-Type: application/json" \
   -d '{
@@ -149,7 +149,7 @@ Now your AI agent can use this credential to sign transactions:
 
 ```bash
 # Get wallet address
-curl -X POST http://localhost:8080/agent/rpc \
+curl -X POST http://localhost:8080/v1/agent/rpc \
   -H "Authorization: Bearer aw_ag_xxxxxxxxxxxx.zzzzzzzzzzzzzzzzzzzzzzzz" \
   -H "Content-Type: application/json" \
   -d '{
@@ -171,7 +171,7 @@ Response:
 
 ```bash
 # Sign a message
-curl -X POST http://localhost:8080/agent/rpc \
+curl -X POST http://localhost:8080/v1/agent/rpc \
   -H "Authorization: Bearer aw_ag_xxxxxxxxxxxx.zzzzzzzzzzzzzzzzzzzzzzzz" \
   -H "Content-Type: application/json" \
   -d '{
@@ -197,15 +197,15 @@ If you need to stop an agent:
 
 ```bash
 # Pause (can resume later)
-curl -X POST http://localhost:8080/api/credentials/660e8400-e29b-41d4-a716-446655440001/pause \
+curl -X POST http://localhost:8080/v1/credentials/660e8400-e29b-41d4-a716-446655440001/pause \
   -H "Authorization: Bearer aw_pk_xxxxxxxxxxxx.yyyyyyyyyyyyyyyyyyyyyyyy"
 
 # Or revoke permanently
-curl -X POST http://localhost:8080/api/credentials/660e8400-e29b-41d4-a716-446655440001/revoke \
+curl -X POST http://localhost:8080/v1/credentials/660e8400-e29b-41d4-a716-446655440001/revoke \
   -H "Authorization: Bearer aw_pk_xxxxxxxxxxxx.yyyyyyyyyyyyyyyyyyyyyyyy"
 
 # Emergency: Kill the entire wallet (blocks ALL credentials)
-curl -X POST http://localhost:8080/api/wallets/550e8400-e29b-41d4-a716-446655440000/kill \
+curl -X POST http://localhost:8080/v1/wallets/550e8400-e29b-41d4-a716-446655440000/kill \
   -H "Authorization: Bearer aw_pk_xxxxxxxxxxxx.yyyyyyyyyyyyyyyyyyyyyyyy"
 ```
 

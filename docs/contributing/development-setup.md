@@ -247,7 +247,7 @@ make run
 cd dashboard && bun run dev
 # Navigate to http://localhost:3000 and create an app
 
-# Note the App ID and Secret
+# Note the Principal API Key
 ```
 
 ### Test API Calls
@@ -255,19 +255,13 @@ cd dashboard && bun run dev
 ```bash
 # Set environment variables
 export API=http://localhost:8080
-export APP_ID=your-app-id
-export APP_SECRET=your-app-secret
-
-# Get a JWT from your OIDC provider
-export JWT=your-jwt-token
+export PRINCIPAL_API_KEY=aw_pk_xxx.secret
 
 # Create a wallet
 curl -X POST "$API/v1/wallets" \
-  -H "X-App-Id: $APP_ID" \
-  -H "X-App-Secret: $APP_SECRET" \
-  -H "Authorization: Bearer $JWT" \
+  -H "Authorization: Bearer $PRINCIPAL_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"chain_type": "ethereum", "exec_backend": "kms"}'
+  -d '{"name": "Test Wallet", "chain_type": "evm"}'
 ```
 
 ### Using Test Fixtures
@@ -349,6 +343,6 @@ bun run db:push
 
 ## Next Steps
 
-- [CLAUDE.md](../../CLAUDE.md) - Project coding guidelines and architecture
-- [API Reference](../api-reference/overview.md) - API documentation
-- [Architecture Overview](../getting-started/architecture-overview.md) - System design
+- [CONTRIBUTING.md](../../CONTRIBUTING.md) - Contribution guidelines
+- [API Reference](../agent-wallet/api-reference.md) - API documentation
+- [Overview](../agent-wallet/overview.md) - System architecture

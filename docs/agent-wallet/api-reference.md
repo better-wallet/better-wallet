@@ -24,14 +24,14 @@ Authorization: Bearer aw_ag_<prefix>.<secret>
 
 ## Principal API
 
-Base URL: `/api`
+Base URL: `/v1`
 
 ### Wallets
 
 #### Create Wallet
 
 ```http
-POST /api/wallets
+POST /v1/wallets
 Authorization: Bearer aw_pk_xxx.secret
 Content-Type: application/json
 ```
@@ -61,7 +61,7 @@ Response:
 #### List Wallets
 
 ```http
-GET /api/wallets
+GET /v1/wallets
 Authorization: Bearer aw_pk_xxx.secret
 ```
 
@@ -84,21 +84,21 @@ Response:
 #### Get Wallet
 
 ```http
-GET /api/wallets/{wallet_id}
+GET /v1/wallets/{wallet_id}
 Authorization: Bearer aw_pk_xxx.secret
 ```
 
 #### Pause Wallet
 
 ```http
-POST /api/wallets/{wallet_id}/pause
+POST /v1/wallets/{wallet_id}/pause
 Authorization: Bearer aw_pk_xxx.secret
 ```
 
 #### Resume Wallet
 
 ```http
-POST /api/wallets/{wallet_id}/resume
+POST /v1/wallets/{wallet_id}/resume
 Authorization: Bearer aw_pk_xxx.secret
 ```
 
@@ -107,7 +107,7 @@ Authorization: Bearer aw_pk_xxx.secret
 Permanently blocks ALL credentials for this wallet.
 
 ```http
-POST /api/wallets/{wallet_id}/kill
+POST /v1/wallets/{wallet_id}/kill
 Authorization: Bearer aw_pk_xxx.secret
 ```
 
@@ -120,7 +120,7 @@ Authorization: Bearer aw_pk_xxx.secret
 #### Create Credential
 
 ```http
-POST /api/wallets/{wallet_id}/credentials
+POST /v1/wallets/{wallet_id}/credentials
 Authorization: Bearer aw_pk_xxx.secret
 Content-Type: application/json
 ```
@@ -177,7 +177,7 @@ Response:
 #### List Credentials
 
 ```http
-GET /api/wallets/{wallet_id}/credentials
+GET /v1/wallets/{wallet_id}/credentials
 Authorization: Bearer aw_pk_xxx.secret
 ```
 
@@ -203,7 +203,7 @@ Response:
 #### Get Credential
 
 ```http
-GET /api/credentials/{credential_id}
+GET /v1/credentials/{credential_id}
 Authorization: Bearer aw_pk_xxx.secret
 ```
 
@@ -212,7 +212,7 @@ Authorization: Bearer aw_pk_xxx.secret
 Temporarily disable a credential. Can be resumed later.
 
 ```http
-POST /api/credentials/{credential_id}/pause
+POST /v1/credentials/{credential_id}/pause
 Authorization: Bearer aw_pk_xxx.secret
 ```
 
@@ -221,7 +221,7 @@ Authorization: Bearer aw_pk_xxx.secret
 Re-enable a paused credential.
 
 ```http
-POST /api/credentials/{credential_id}/resume
+POST /v1/credentials/{credential_id}/resume
 Authorization: Bearer aw_pk_xxx.secret
 ```
 
@@ -230,7 +230,7 @@ Authorization: Bearer aw_pk_xxx.secret
 Permanently disable a credential. Cannot be undone.
 
 ```http
-POST /api/credentials/{credential_id}/revoke
+POST /v1/credentials/{credential_id}/revoke
 Authorization: Bearer aw_pk_xxx.secret
 ```
 
@@ -238,12 +238,12 @@ Authorization: Bearer aw_pk_xxx.secret
 
 ## Agent Signing API
 
-Base URL: `/agent/rpc`
+Base URL: `/v1/agent/rpc`
 
 All agent signing operations use JSON-RPC 2.0 format.
 
 ```http
-POST /agent/rpc
+POST /v1/agent/rpc
 Authorization: Bearer aw_ag_xxx.secret
 Content-Type: application/json
 ```

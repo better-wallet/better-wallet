@@ -142,8 +142,8 @@ LOG_FORMAT=json  # or "text"
   "path": "/v1/wallets",
   "status": 201,
   "duration_ms": 45,
-  "app_id": "app-uuid",
-  "user_id": "user-uuid"
+  "principal_id": "principal-uuid",
+  "wallet_id": "wallet-uuid"
 }
 ```
 
@@ -152,9 +152,9 @@ LOG_FORMAT=json  # or "text"
 | Field | Description |
 |-------|-------------|
 | `request_id` | Unique request identifier |
-| `app_id` | Application ID |
-| `user_id` | User ID (from JWT) |
+| `principal_id` | Principal ID |
 | `wallet_id` | Wallet ID (when applicable) |
+| `credential_id` | Agent Credential ID (for agent requests) |
 | `duration_ms` | Request duration |
 | `error` | Error message (if any) |
 
@@ -224,12 +224,12 @@ Security-relevant operations are logged to the `audit_logs` table:
 {
   "id": "audit-uuid",
   "event_type": "transaction.signed",
-  "app_id": "app-uuid",
-  "user_id": "user-uuid",
+  "principal_id": "principal-uuid",
+  "credential_id": "credential-uuid",
   "wallet_id": "wallet-uuid",
   "request_id": "req-uuid",
   "ip_address": "192.168.1.1",
-  "user_agent": "MyApp/1.0",
+  "user_agent": "MyAgent/1.0",
   "details": {
     "chain_id": 1,
     "to": "0x742d35Cc...",
